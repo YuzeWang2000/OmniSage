@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     model: str
     mode: str = "chat"
     use_rag: bool = False
+    stream: bool = True
 
 class ChatResponse(BaseModel):
     response: str
@@ -44,6 +45,14 @@ class ConversationResponse(BaseModel):
 
 class ConversationListResponse(BaseModel):
     conversations: List[ConversationResponse]
+
+class ChatMessageResponse(BaseModel):
+    role: str
+    content: str
+
+class ChatHistoryResponse(BaseModel):
+    conversation_id: int
+    messages: List[ChatMessageResponse]
 
 # API Key相关schemas
 class ApiKeyCreate(BaseModel):

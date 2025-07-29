@@ -17,40 +17,6 @@ def get_db():
     finally:
         db.close()
 
-@router.post("/", response_model=schemas.ChatResponse)
-def rag_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)):
-    """
-    RAG接口 - 使用向量数据库进行检索增强生成
-    """
-    try:
-        # 获取聊天历史
-        chat_history = DatabaseService.get_chat_history(req.user_id, db)
-        # 构建LLM控制器需要的payload（强制启用RAG）
-        payload = {
-            "message": req.message,
-            "model": req.model,
-            "use_rag": True,  # RAG接口强制启用RAG
-            "chat_history": chat_history
-        }
-        
-        # 调用LLM控制器处理消息
-        response = llm_controller.process_message(payload)
-        
-        # 保存聊天历史到数据库
-        DatabaseService.save_chat_history(
-            user_id=req.user_id,
-            message=req.message,
-            response=response,
-            model=req.model,
-            db=db
-        )
-        
-        return {"response": response}
-        
-    except Exception as e:
-        print(f"RAG接口错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"RAG处理失败: {str(e)}")
-
 @router.post("/upload", response_model=schemas.FileUploadResponse)
 def upload_file(user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     """

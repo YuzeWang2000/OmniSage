@@ -8,7 +8,7 @@ from ..services.llm_service import llm_controller
 from ..services.database_service import DatabaseService
 import json
 import asyncio
-
+import time
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 def get_db():
@@ -17,54 +17,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-@router.post("/", response_model=schemas.ChatResponse)
-def chat_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)):
-    """
-    聊天接口 - 支持对话管理
-    """
-    try:
-        # 验证对话是否存在且属于该用户
-        conversation = DatabaseService.get_conversation_by_id(
-            req.conversation_id, 
-            req.user_id, 
-            db
-        )
-        if not conversation:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="对话不存在或无权限访问"
-            )
-        
-        # 获取聊天历史
-        chat_history = DatabaseService.get_chat_history(req.conversation_id, db)
-        
-        # 构建LLM控制器需要的payload
-        payload = {
-            "message": req.message,
-            "model": req.model,
-            "mode": req.mode,
-            "use_rag": req.use_rag,
-            "chat_history": chat_history
-        }
-        
-        # 调用LLM控制器处理消息（传递用户ID和数据库会话）
-        response = llm_controller.process_message(payload, req.user_id, db)
-        
-        # 保存聊天历史到数据库
-        DatabaseService.save_chat_history(
-            conversation_id=req.conversation_id,
-            message=req.message,
-            response=response,
-            model=req.model,
-            db=db
-        )
-        
-        return {"response": response}
-        
-    except Exception as e:
-        print(f"聊天接口错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"聊天处理失败: {str(e)}")
 
 @router.post("/stream")
 def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)):
@@ -95,15 +47,23 @@ def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)
             "use_rag": req.use_rag,
             "chat_history": chat_history
         }
-        
+        stream = req.stream if req.stream is not None else True
+        # stream = False
         def generate():
             try:
                 # 调用LLM控制器进行流式处理
                 full_response = ""
-                for chunk in llm_controller.process_message_stream(payload, req.user_id, db):
+                for chunk in llm_controller.process_message(payload, req.user_id, db):
+                    if chunk.startswith('<think>'):
+                        chunk = chunk.replace('<think>', '='*20 + ' AI思考中🤔 ' )
+                    if chunk.endswith('</think>'):
+                        chunk = chunk.replace('</think>', '='*20 + ' AI思考结束')
+                    # print(f"经过处理后的LLM返回的chunk: {chunk}")
                     full_response += chunk
-                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-                
+                    if stream:
+                        yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                if not stream:
+                    yield f"data: {json.dumps({'chunk': full_response})}\n\n"
                 # 保存聊天历史到数据库
                 DatabaseService.save_chat_history(
                     conversation_id=req.conversation_id,

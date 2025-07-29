@@ -30,6 +30,8 @@ def login_user(username, password):
         if not default_conversation_id and choices:
             default_conversation_id = choices[0][1]
         
+        chat_history = load_conversation_history(default_conversation_id, user_id)
+
         # 加载API key列表
         api_keys = get_user_api_keys(user_id)
         api_key_choices = []
@@ -47,10 +49,19 @@ def login_user(username, password):
             gr.update(visible=True),   # 显示退出按钮
             gr.update(choices=choices, value=default_conversation_id),  # 更新对话列表
             default_conversation_id,  # 设置默认对话ID
-            gr.update(choices=api_key_choices, value=None)  # 更新API key列表
+            gr.update(choices=api_key_choices, value=None),  # 更新API key列表
+            chat_history  # 返回聊天历史
         )
     except Exception as e:
-        return None, f"❌ 登录失败: {str(e)}", gr.update(), gr.update(visible=False), gr.update(visible=False), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None)
+        return (None, 
+                f"❌ 登录失败: {str(e)}", 
+                gr.update(), 
+                gr.update(visible=False), 
+                gr.update(visible=False), 
+                gr.update(choices=[], value=None), 
+                None, 
+                gr.update(choices=[], value=None),
+                [])
 
 # 注册函数
 def register_user(username, password, confirm_password):
@@ -67,18 +78,15 @@ def register_user(username, password, confirm_password):
 
 # 退出登录函数
 def logout_user():
-    return None, "✅ 已退出登录", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(choices=[], value=None), None, gr.update(choices=[], value=None)
-
-# 获取模型列表
-def get_models():
-    try:
-        res = requests.get(f"{API_URL}/models")
-        data = res.json()
-        print(data)
-        # 返回所有模型列表（保持向后兼容）
-        return data.get("all_models", ["None"])
-    except:
-        return ["None"]
+    return (None,
+             "✅ 已退出登录", 
+             gr.update(visible=True), 
+             gr.update(visible=False), 
+             gr.update(visible=False), 
+             gr.update(choices=[], value=None), 
+             None, 
+             gr.update(choices=[], value=None),
+             [])
 
 # 获取分类模型列表
 def get_categorized_models():
@@ -96,19 +104,19 @@ def get_categorized_models():
         
         # 确保至少有一个默认选项
         if not categorized_models:
-            categorized_models = ["🖥️ openai"]
+            categorized_models = ["None available models"]
         
         return categorized_models
     except:
-        return ["🖥️ openai"]
+        return ["None available models"]
 
 # 获取默认模型
 def get_default_model():
     try:
         models = get_categorized_models()
-        return models[0] if models else "🖥️ openai"
+        return models[0] if models else "None available models"
     except:
-        return "🖥️ openai"
+        return "None available models"
 
 # 获取用户对话列表
 def get_user_conversations(user_id):
@@ -215,7 +223,7 @@ def upload_file(file, user_id):
         return f"❌ 上传失败: {str(e)}"
 
 # 发送聊天消息（流式版本）
-def send_message_stream(message, user_id, conversation_id, mode, model, use_rag, history):
+def send_message(message, user_id, conversation_id, mode, model, use_rag, history, stream):
     if not message or not user_id or not conversation_id:
         yield history
         return
@@ -246,7 +254,8 @@ def send_message_stream(message, user_id, conversation_id, mode, model, use_rag,
         "message": message,
         "model": clean_model,
         "mode": mode.lower(),       # "chat" or "generate"
-        "use_rag": use_rag
+        "use_rag": use_rag,
+        "stream": stream
     }
     
     try:
@@ -294,7 +303,7 @@ def send_message_stream(message, user_id, conversation_id, mode, model, use_rag,
                             
                     except json.JSONDecodeError:
                         continue
-        
+        # yield history
     except requests.exceptions.Timeout:
         history.pop()  # 移除"正在思考中..."
         history.append({"role": "assistant", "content": "❌ 请求超时，请稍后重试"})
@@ -312,15 +321,21 @@ def send_message_stream(message, user_id, conversation_id, mode, model, use_rag,
 def load_conversation_history(conversation_id, user_id):
     if not conversation_id or not user_id:
         return []
-    
     try:
-        # 这里需要后端提供获取对话历史的接口
-        # 暂时返回空历史，后续可以扩展
-        return []
+        res = requests.get(f"{API_URL}/conversations/{conversation_id}/messages?user_id={user_id}")
+        data = res.json()
+        messages = data.get("messages", [])
+        
+        chat_history = []
+        for msg in messages:
+            chat_history.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+        return chat_history
     except Exception as e:
-        print(f"加载对话历史失败: {str(e)}")
         return []
-
+    
 # 语音转文字
 def transcribe(audio_path):
     try:
@@ -609,7 +624,7 @@ with gr.Blocks(
     login_btn.click(
         login_user,
         inputs=[username, password],
-        outputs=[user_id, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list]
+        outputs=[user_id, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot]
     )
 
     # 注册相关事件
@@ -632,7 +647,7 @@ with gr.Blocks(
 
     logout_btn.click(
         logout_user,
-        outputs=[user_id, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list]
+        outputs=[user_id, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot]
     )
 
     # 新建对话
@@ -650,7 +665,6 @@ with gr.Blocks(
             for conv in conversations:
                 title_text = f"{conv['title']} ({conv['message_count']}条消息)"
                 choices.append((title_text, conv['id']))
-            
             return gr.update(choices=choices, value=conversation_data['id']), status_msg, gr.update(value=""), conversation_data['id']
         else:
             return gr.update(choices=[], value=None), status_msg, gr.update(value=""), None
@@ -675,8 +689,8 @@ with gr.Blocks(
             for conv in conversations:
                 title = f"{conv['title']} ({conv['message_count']}条消息)"
                 choices.append((title, conv['id']))
-                if conv['title'] == "默认对话":
-                    default_conversation_id = conv['id']
+            if choices:
+                default_conversation_id = choices[0][1]
             
             return gr.update(choices=choices, value=default_conversation_id), status_msg, default_conversation_id
         else:
@@ -693,15 +707,14 @@ with gr.Blocks(
         """刷新对话列表"""
         conversations = get_user_conversations(user_id)
         choices = []
-        current_value = None
-        
+        default_conversation_id = None
         for conv in conversations:
             title = f"{conv['title']} ({conv['message_count']}条消息)"
             choices.append((title, conv['id']))
-            if conv['title'] == "默认对话":
-                current_value = conv['id']
+        if choices:
+            default_conversation_id = choices[0][1]
         
-        return gr.update(choices=choices, value=current_value)
+        return gr.update(choices=choices, value=default_conversation_id)
     
     refresh_conversations_btn.click(
         refresh_conversations,
@@ -710,13 +723,16 @@ with gr.Blocks(
     )
     
     # 切换对话
-    def on_conversation_change(conversation_id):
+    def on_conversation_change(conversation_id, user_id):
         """切换对话时清空聊天历史"""
+        if conversation_id is not None:
+            chat_history = load_conversation_history(conversation_id, user_id)
+            return conversation_id, chat_history
         return conversation_id, []  # 返回空的消息列表
     
     conversation_list.change(
         on_conversation_change,
-        inputs=[conversation_list],
+        inputs=[conversation_list, user_id],
         outputs=[conversation_id, chatbot]
     )
 
@@ -729,9 +745,9 @@ with gr.Blocks(
         """发送消息并清空输入框"""
         if not message.strip():
             return history, ""
-        
+        stream = True
         # 使用流式处理
-        for updated_history in send_message_stream(message, user_id, conversation_id, mode, model, use_rag, history):
+        for updated_history in send_message(message, user_id, conversation_id, mode, model, use_rag, history, stream):
             yield updated_history, ""
     
     # 回车发送

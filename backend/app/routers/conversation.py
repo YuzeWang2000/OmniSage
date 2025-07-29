@@ -89,6 +89,41 @@ def get_user_conversations(user_id: int, db: Session = Depends(get_db)):
             detail="获取对话列表失败"
         )
 
+@router.get("/{conversation_id}/messages", response_model=schemas.ChatHistoryResponse)
+def get_conversation_messages(conversation_id: int, user_id: int, db: Session = Depends(get_db)):
+    """获取指定对话的聊天历史"""
+    try:
+        # 验证对话是否存在且属于该用户
+        conversation = DatabaseService.get_conversation_by_id(conversation_id, user_id, db)
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在或无权限访问"
+            )
+        
+        # 获取聊天历史
+        messages = DatabaseService.get_chat_history(conversation_id, db)
+        message_responses = []
+        for msg in messages:
+            message_responses.append(schemas.ChatMessageResponse(
+                role=msg['role'],
+                content=msg['content'],
+            ))
+        
+        return schemas.ChatHistoryResponse(
+            conversation_id=conversation_id,
+            messages=message_responses
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"获取聊天历史失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取聊天历史失败"
+        )
+
 @router.delete("/{conversation_id}")
 def delete_conversation(conversation_id: int, user_id: int, db: Session = Depends(get_db)):
     """删除对话"""
