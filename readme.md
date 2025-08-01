@@ -233,10 +233,6 @@ SECRET_KEY=your_secret_key
 - 遵循 PEP 8 代码风格
 - 添加适当的注释和文档
 
-## 许可证
-
-本项目采用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
-
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
