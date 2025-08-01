@@ -146,24 +146,3 @@ def delete_conversation(conversation_id: int, user_id: int, db: Session = Depend
             detail="删除对话失败"
         )
 
-@router.put("/{conversation_id}/title")
-def update_conversation_title(conversation_id: int, user_id: int, title: str, db: Session = Depends(get_db)):
-    """更新对话标题"""
-    try:
-        success = DatabaseService.update_conversation_title(conversation_id, user_id, title, db)
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="对话不存在或无权限修改"
-            )
-        
-        return {"message": "标题更新成功"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"更新对话标题失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="更新标题失败"
-        ) 

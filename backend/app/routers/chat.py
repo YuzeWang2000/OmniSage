@@ -38,14 +38,22 @@ def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)
         
         # 获取聊天历史
         chat_history = DatabaseService.get_chat_history(req.conversation_id, db)
-        
+        print("req.use_wiki"+"="*20)
+        print(req.use_wiki)
         # 构建LLM控制器需要的payload
         payload = {
             "message": req.message,
             "model": req.model,
             "mode": req.mode,
             "use_rag": req.use_rag,
-            "chat_history": chat_history
+            "use_wiki": req.use_wiki,  # 添加Wiki支持
+            "chat_history": chat_history,
+            # Chain相关参数
+            "chain_type": getattr(req, 'chain_type', 'stuff'),
+            "prompt_name": getattr(req, 'prompt_name', 'chat_default'),
+            "use_reranker": getattr(req, 'use_reranker', True),
+            "top_k": getattr(req, 'top_k', 5),
+            "score_threshold": getattr(req, 'score_threshold', 0.5)
         }
         stream = req.stream if req.stream is not None else True
         # stream = False

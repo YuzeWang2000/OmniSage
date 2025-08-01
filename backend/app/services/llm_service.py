@@ -7,6 +7,7 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import (
+    PlaywrightURLLoader,
     UnstructuredFileLoader, 
     TextLoader,
     PyPDFLoader,
@@ -103,114 +104,536 @@ class LLMController:
                 raise ValueError(f"不支持的模型模式: {mode}")
 
     
-    def get_rag_context(self, message: str) -> str:
-        """从向量数据库中检索相关文档"""
-        vectorstore = self.get_vectorstore()
-        print("=" * 20, "获得向量数据库", "=" * 20)
-        if not vectorstore:
+    def get_rag_context(self, message: str, user_id: int = None, db = None) -> str:
+        """从向量数据库中检索相关文档（传统方法）"""
+        if not user_id or not db:
+            print("没有用户ID或数据库")
             return ""
+        from .knowledgebase_service import knowledge_base_service
+        return knowledge_base_service.get_rag_context(user_id, message, top_k=3, db=db)
+    
+    def create_rag_chain(
+        self,
+        user_id: int,
+        model_name: str,
+        chain_type: str = "stuff",
+        use_reranker: bool = True,
+        top_k: int = 5,
+        score_threshold: float = 0.5,
+        use_wiki: bool = False,  # 添加Wiki知识支持
+        db = None
+    ):
+        """
+        创建RAG Chain
         
+        Args:
+            user_id: 用户ID
+            model_name: 模型名称
+            chain_type: Chain类型
+            use_reranker: 是否使用重排序
+            top_k: 检索文档数量
+            score_threshold: 相似度阈值
+            use_wiki: 是否使用Wiki知识
+            db: 数据库会话
+            
+        Returns:
+            RAG Chain实例或None
+        """
         try:
-            retriever = vectorstore.as_retriever(
-                search_type="similarity", 
-                search_kwargs={"k": 3}
+            # 获取LLM实例
+            llm = self.get_llm(model_name, mode="chat", user_id=user_id, db=db)
+            if not llm:
+                return None
+            
+            # 创建RAG Chain
+            from .knowledgebase_service import knowledge_base_service
+            return knowledge_base_service.create_rag_chain_for_user(
+                user_id=user_id,
+                llm=llm,
+                chain_type=chain_type,
+                use_reranker=use_reranker,
+                top_k=top_k,
+                score_threshold=score_threshold,
+                use_wiki=use_wiki,  # 传递Wiki参数
+                db=db
             )
-            docs = retriever.get_relevant_documents(message)
-            if docs:
-                context = "\n".join([doc.page_content for doc in docs])
-                print("=" * 20, "RAG检索结果", "=" * 20)
-                print(docs)
-                print(f"RAG检索到 {len(docs)} 条相关文档")
-                print("相关文档内容:", context)
-                return f"\n\n相关文档信息：\n{context}\n\n基于以上信息回答："
         except Exception as e:
-            print(f"RAG检索失败: {str(e)}")
+            print(f"创建RAG Chain失败: {str(e)}")
+            return None
+    
+    def create_simple_chat_chain(
+        self,
+        model_name: str,
+        user_id: int = None,
+        db = None
+    ):
+        """
+        创建简单聊天Chain（不使用Prompt模板）
         
-        return ""
+        Args:
+            model_name: 模型名称
+            user_id: 用户ID
+            db: 数据库会话
+            
+        Returns:
+            简单聊天Chain实例
+        """
+        try:
+            # 获取LLM实例
+            llm = self.get_llm(model_name, mode="chat", user_id=user_id, db=db)
+            if not llm:
+                return None
+            
+            # 创建简单聊天Chain
+            from .knowledgebase_service import knowledge_base_service
+            return knowledge_base_service.create_simple_chat_chain(llm)
+        except Exception as e:
+            print(f"创建简单聊天Chain失败: {str(e)}")
+            return None
+    
+    def create_chat_chain(
+        self,
+        model_name: str,
+        prompt_name: str = "chat_default",
+        user_id: int = None,
+        db = None
+    ):
+        """
+        创建聊天Chain
+        
+        Args:
+            model_name: 模型名称
+            prompt_name: Prompt模板名称
+            user_id: 用户ID
+            db: 数据库会话
+            
+        Returns:
+            聊天Chain实例
+        """
+        try:
+            # 获取LLM实例
+            llm = self.get_llm(model_name, mode="chat", user_id=user_id, db=db)
+            if not llm:
+                return None
+            
+            # 创建聊天Chain
+            from .knowledgebase_service import knowledge_base_service
+            return knowledge_base_service.create_chat_chain(llm, prompt_name)
+        except Exception as e:
+            print(f"创建聊天Chain失败: {str(e)}")
+            return None
+    
+    def create_generation_chain(
+        self,
+        model_name: str,
+        prompt_name: str,
+        user_id: int = None,
+        db = None
+    ):
+        """
+        创建生成任务Chain
+        
+        Args:
+            model_name: 模型名称
+            prompt_name: Prompt模板名称
+            user_id: 用户ID
+            db: 数据库会话
+            
+        Returns:
+            生成Chain实例
+        """
+        try:
+            # 获取LLM实例
+            llm = self.get_llm(model_name, mode="generate", user_id=user_id, db=db)
+            if not llm:
+                return None
+            
+            # 创建生成Chain
+            from .knowledgebase_service import knowledge_base_service
+            return knowledge_base_service.create_generation_chain(llm, prompt_name)
+        except Exception as e:
+            print(f"创建生成Chain失败: {str(e)}")
+            return None
+    
+    def get_available_prompts(self):
+        """获取可用的Prompt模板"""
+        from .knowledgebase_service import knowledge_base_service
+        return knowledge_base_service.get_available_prompts()
+    
+    def get_chain_types(self):
+        """获取可用的Chain类型"""
+        from .knowledgebase_service import knowledge_base_service
+        return knowledge_base_service.get_chain_types()
     
     def process_message(self, payload: Dict[str, Any], user_id: int = None, db = None):
         """
-        流式处理消息
+        流式处理消息 - 统一使用Chain方式
         """
         message = payload.get("message", "")
         model_name = payload.get("model", settings.DEFAULT_MODEL)
         mode = payload.get("mode", "chat")
         use_rag = payload.get("use_rag", False)
+        use_wiki = payload.get("use_wiki", False)  # 获取Wiki参数
         chat_history = payload.get("chat_history", [])
-        
-        # 构建消息列表
-        messages = []
-        
-        # 添加聊天历史
-        for hist in chat_history:
-            if hist.get("role") == "user":
-                messages.append(HumanMessage(content=hist.get("content", "")))
-            elif hist.get("role") == "assistant":
-                messages.append(AIMessage(content=hist.get("content", "")))
-        
-        # 处理当前消息
-        if use_rag:
-            print("=" * 20, "RAG处理", "=" * 20)        
-            rag_context = self.get_rag_context(message)
-            if rag_context:
-                enhanced_message = message + rag_context
-                messages.append(HumanMessage(content=enhanced_message))
-            else:
-                messages.append(HumanMessage(content=message))
-        else:
-            messages.append(HumanMessage(content=message))
-        
-        # 调用模型
+        chain_type = payload.get("chain_type", "stuff")
+        # 根据模式选择合适的默认prompt
+        default_prompt = "generate_default" if mode == "generate" else "chat_default"
+        prompt_name = payload.get("prompt_name", default_prompt)
+        use_reranker = payload.get("use_reranker", True)
+        top_k = payload.get("top_k", 5)
+        score_threshold = payload.get("score_threshold", 0.5)
+        print("=" * 20, "处理消息", "=" * 20)
+        print(payload)
+        print("=" * 20, "处理消息", "=" * 20)
         try:
-            llm = self.get_llm(model_name, mode, user_id, db)
-            if hasattr(llm, 'stream'):
-                print("使用流式API")
-                # 同步流式API
-                try:
-                    in_reasoning = False 
-                    for chunk in llm.stream(messages):
-                        # print(f"LLM返回的chunk: {chunk}")
-                        # 判断是否有reasoning_content
-                        reasoning_content = ""
-                        if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs.get("reasoning_content"):
-                            reasoning_content = chunk.additional_kwargs["reasoning_content"]
-                            # 推理阶段开始
-                            if not in_reasoning:
-                                yield "<think>"
-                                yield " \n"
-                                in_reasoning = True
-                            yield reasoning_content
-                        else:
-                            # 推理阶段结束
+            # 如果启用了Wiki知识，优先使用RAG模式
+            if use_wiki and not use_rag:
+                print("🔍 检测到Wiki知识请求，自动启用RAG模式")
+                use_rag = True
+            
+            if use_rag:
+                print("=" * 20, "RAG Chain处理", "=" * 20)
+                # 根据mode选择不同的RAG Chain
+                if mode == "generate":
+                    print("使用RAG生成Chain")
+                    rag_chain = self.create_rag_chain(
+                        user_id=user_id,
+                        model_name=model_name,
+                        chain_type=chain_type,
+                        use_reranker=use_reranker,
+                        top_k=top_k,
+                        score_threshold=score_threshold,
+                        use_wiki=use_wiki,  # 传递Wiki参数
+                        db=db
+                    )
+                else:
+                    # 默认使用聊天模式
+                    print("使用RAG聊天Chain")
+                    rag_chain = self.create_rag_chain(
+                        user_id=user_id,
+                        model_name=model_name,
+                        chain_type=chain_type,
+                        use_reranker=use_reranker,
+                        top_k=top_k,
+                        score_threshold=score_threshold,
+                        use_wiki=use_wiki,  # 传递Wiki参数
+                        db=db
+                    )
+                
+                if rag_chain:
+                    # 流式处理RAG Chain
+                    if hasattr(rag_chain, 'stream'):
+                        print("使用RAG Chain流式API")
+                        try:
+                            in_reasoning = False
+                            for chunk in rag_chain.stream({"input": message}):
+                                # 处理推理内容
+                                if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs.get("reasoning_content"):
+                                    reasoning_content = chunk.additional_kwargs["reasoning_content"]
+                                    if not in_reasoning:
+                                        yield "<think>"
+                                        yield " \n"
+                                        in_reasoning = True
+                                    yield reasoning_content
+                                else:
+                                    if in_reasoning:
+                                        yield " \n"
+                                        yield "</think>"
+                                        yield " \n\n"
+                                        in_reasoning = False
+                                    # 正常内容输出
+                                    if hasattr(chunk, 'content') and chunk.content:
+                                        yield chunk.content
+                                    elif hasattr(chunk, 'result'):
+                                        yield chunk.result
+                                    elif hasattr(chunk, 'answer'):
+                                        yield chunk.answer
+                                    elif hasattr(chunk, 'answer_text'):
+                                        yield chunk.answer_text
+                                    elif isinstance(chunk, dict):
+                                        # 处理新的RunnableBinding格式
+                                        if 'answer' in chunk:
+                                            yield chunk['answer']
+                                        elif 'result' in chunk:
+                                            yield chunk['result']
+                                        elif 'content' in chunk:
+                                            yield chunk['content']
+                                        elif 'answer_text' in chunk:
+                                            yield chunk['answer_text']
+                            
                             if in_reasoning:
-                                yield " \n"
                                 yield "</think>"
-                                yield " \n\n"
-                                in_reasoning = False
-                            # 正常内容输出
-                            if hasattr(chunk, 'content') and chunk.content:
-                                yield chunk.content
-                    # 如果推理阶段还未关闭，最后补一个</think>
-                    if in_reasoning:
-                        yield "</think>"
-                        yield " \n"
-                except Exception as e:
-                    yield f"❌ 流式处理失败: {str(e)}"
+                                yield " \n"
+                        except Exception as e:
+                            yield f"❌ RAG Chain流式处理失败: {str(e)}"
+                    else:
+                        # 非流式RAG Chain
+                        print("使用RAG Chain非流式API")
+                        try:
+                            result = rag_chain.invoke({"input": message})
+                            answer = result.answer if hasattr(result, 'answer') else result.result if hasattr(result, 'result') else str(result)
+                            
+                            # 按字符流式输出
+                            for char in answer:
+                                yield char
+                        except Exception as e:
+                            yield f"❌ RAG Chain处理失败: {str(e)}"
+                else:
+                    # 如果RAG Chain创建失败，抛出异常而不是回退
+                    print("RAG Chain创建失败")
+                    raise Exception("RAG Chain创建失败，请检查知识库配置")
             else:
-                # 模拟流式输出
-                print("使用模拟流式输出")
-                try:
-                    response = llm.invoke(messages) if hasattr(llm, 'invoke') else llm(messages)
-                    content = response.content if hasattr(response, 'content') else str(response)
+                # 根据mode选择不同的Chain处理（不使用RAG）
+                if mode == "generate":
+                    print("=" * 20, "生成Chain处理", "=" * 20)
+                    # 使用生成Chain
+                    generation_chain = self.create_generation_chain(
+                        model_name=model_name,
+                        prompt_name=prompt_name,
+                        user_id=user_id,
+                        db=db
+                    )
+                    print("=" * 20, "生成Chain处理", "=" * 20)
+                    print(generation_chain)
+                    print("=" * 20, "生成Chain处理", "=" * 20)
                     
-                    # 按字符流式输出
-                    for char in content:
-                        yield char
-                except Exception as e:
-                    yield f"❌ 处理失败: {str(e)}"
+                    if generation_chain:
+                        # 流式处理生成Chain
+                        if hasattr(generation_chain, 'stream'):
+                            print("使用生成Chain流式API")
+                            try:
+                                in_reasoning = False
+                                for chunk in generation_chain.stream({"input": message}):
+                                    # 处理推理内容
+                                    if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs.get("reasoning_content"):
+                                        print("=" * 20, "处理推理内容", "=" * 20)
+                                        print(chunk)
+                                        print("=" * 20, "处理推理内容", "=" * 20)
+                                        reasoning_content = chunk.additional_kwargs["reasoning_content"]
+                                        if not in_reasoning:
+                                            yield "<think>"
+                                            yield " \n"
+                                            in_reasoning = True
+                                        yield reasoning_content
+                                    else:
+                                        if in_reasoning:
+                                            yield " \n"
+                                            yield "</think>"
+                                            yield " \n\n"
+                                            in_reasoning = False
+                                        print("=" * 20, "处理正常内容", "=" * 20)
+                                        print(chunk)
+                                        print("=" * 20, "处理正常内容", "=" * 20)
+                                        # 正常内容输出
+                                        if hasattr(chunk, 'content') and chunk.content:
+                                            yield chunk.content
+                                        elif hasattr(chunk, 'result'):
+                                            yield chunk.result
+                                        elif hasattr(chunk, 'answer'):
+                                            yield chunk.answer
+                                        elif hasattr(chunk, 'answer_text'):
+                                            yield chunk.answer_text
+                                        elif isinstance(chunk, dict):
+                                            # 处理新的RunnableSequence格式
+                                            if 'answer' in chunk:
+                                                yield chunk['answer']
+                                            elif 'result' in chunk:
+                                                yield chunk['result']
+                                            elif 'content' in chunk:
+                                                yield chunk['content']
+                                            elif 'answer_text' in chunk:
+                                                yield chunk['answer_text']
+                                        else:
+                                            yield chunk
+                                
+                                if in_reasoning:
+                                    yield "</think>"
+                                    yield " \n"
+                            except Exception as e:
+                                yield f"❌ 生成Chain流式处理失败: {str(e)}"
+                        else:
+                            # 非流式生成Chain
+                            print("使用生成Chain非流式API")
+                            try:
+                                result = generation_chain.invoke({"input": message})
+                                answer = result.answer if hasattr(result, 'answer') else result.result if hasattr(result, 'result') else str(result)
+                                
+                                # 按字符流式输出
+                                for char in answer:
+                                    yield char
+                            except Exception as e:
+                                yield f"❌ 生成Chain处理失败: {str(e)}"
+                    else:
+                        # 如果生成Chain创建失败，抛出异常而不是回退
+                        print("生成Chain创建失败")
+                        raise Exception("生成Chain创建失败，请检查模型配置")
+                    return  # 生成模式处理完成，直接返回
+                else:
+                    # 默认使用聊天模式
+                    print("=" * 20, "聊天Chain处理", "=" * 20)
+                    
+                    # 初始化chat_chain变量
+                    chat_chain = None
+                    
+                    # 根据是否有prompt_name选择不同的聊天Chain
+                    if prompt_name and prompt_name != "chat_default":
+                        # 使用带Prompt模板的聊天Chain
+                        chat_chain = self.create_chat_chain(
+                            model_name=model_name,
+                            prompt_name=prompt_name,
+                            user_id=user_id,
+                            db=db
+                        )
+                    else:
+                        # 使用简单聊天Chain
+                        chat_chain = self.create_simple_chat_chain(
+                            model_name=model_name,
+                            user_id=user_id,
+                            db=db
+                        )
+                
+                if chat_chain:
+                    # 构建聊天历史
+                    history_messages = []
+                    for hist in chat_history:
+                        if hist.get("role") == "user":
+                            history_messages.append(HumanMessage(content=hist.get("content", "")))
+                        elif hist.get("role") == "assistant":
+                            history_messages.append(AIMessage(content=hist.get("content", "")))
+                    
+                    # 构建完整的消息列表（包含历史）
+                    full_messages = history_messages + [HumanMessage(content=message)]
+                    
+                    # 流式处理
+                    if hasattr(chat_chain, 'stream'):
+                        print("使用简单聊天Chain流式API")
+                        try:
+                            in_reasoning = False
+                            for chunk in chat_chain.stream(full_messages):
+                                if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs.get("reasoning_content"):
+                                    reasoning_content = chunk.additional_kwargs["reasoning_content"]
+                                    if not in_reasoning:
+                                        yield "<think>"
+                                        yield " \n"
+                                        in_reasoning = True
+                                    yield reasoning_content
+                                else:
+                                    if in_reasoning:
+                                        yield " \n"
+                                        yield "</think>"
+                                        yield " \n\n"
+                                        in_reasoning = False
+                                    if hasattr(chunk, 'content') and chunk.content:
+                                        yield chunk.content
+                            
+                            if in_reasoning:
+                                yield "</think>"
+                                yield " \n"
+                        except Exception as e:
+                            yield f"❌ 简单聊天Chain流式处理失败: {str(e)}"
+                    else:
+                        # 非流式聊天Chain
+                        print("使用简单聊天Chain非流式API")
+                        try:
+                            response = chat_chain.invoke(full_messages)
+                            content = response.content if hasattr(response, 'content') else str(response)
+                            
+                            # 按字符流式输出
+                            for char in content:
+                                yield char
+                        except Exception as e:
+                            yield f"❌ 简单聊天Chain处理失败: {str(e)}"
+                else:
+                    # 如果简单聊天Chain创建失败，回退到传统方式
+                    print("简单聊天Chain创建失败，回退到传统方式")
+                    yield from self._process_message_traditional(payload, user_id, db)
                     
         except Exception as e:
-            yield f"❌ 模型调用失败: {str(e)}"
+            yield f"❌ Chain处理失败: {str(e)}"
+    
+    # def _process_message_traditional(self, payload: Dict[str, Any], user_id: int = None, db = None):
+    #     """
+    #     传统的消息处理方式（作为回退方案）
+    #     """
+    #     message = payload.get("message", "")
+    #     model_name = payload.get("model", settings.DEFAULT_MODEL)
+    #     mode = payload.get("mode", "chat")
+    #     use_rag = payload.get("use_rag", False)
+    #     chat_history = payload.get("chat_history", [])
+        
+    #     # 构建消息列表
+    #     messages = []
+        
+    #     # 添加聊天历史
+    #     for hist in chat_history:
+    #         if hist.get("role") == "user":
+    #             messages.append(HumanMessage(content=hist.get("content", "")))
+    #         elif hist.get("role") == "assistant":
+    #             messages.append(AIMessage(content=hist.get("content", "")))
+        
+    #     # 处理当前消息
+    #     if use_rag:
+    #         print("=" * 20, "传统RAG处理", "=" * 20)        
+    #         rag_context = self.get_rag_context(message, user_id, db)
+    #         print(f"RAG上下文: {rag_context}")
+    #         if rag_context:
+    #             enhanced_message = message + rag_context
+    #             messages.append(HumanMessage(content=enhanced_message))
+    #         else:
+    #             messages.append(HumanMessage(content=message))
+    #     else:
+    #         messages.append(HumanMessage(content=message))
+        
+    #     # 调用模型
+    #     try:
+    #         llm = self.get_llm(model_name, mode, user_id, db)
+    #         if hasattr(llm, 'stream'):
+    #             print("使用流式API")
+    #             # 同步流式API
+    #             try:
+    #                 in_reasoning = False 
+    #                 for chunk in llm.stream(messages):
+    #                     # 判断是否有reasoning_content
+    #                     reasoning_content = ""
+    #                     if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs.get("reasoning_content"):
+    #                         reasoning_content = chunk.additional_kwargs["reasoning_content"]
+    #                         # 推理阶段开始
+    #                         if not in_reasoning:
+    #                             yield "<think>"
+    #                             yield " \n"
+    #                             in_reasoning = True
+    #                         yield reasoning_content
+    #                     else:
+    #                         # 推理阶段结束
+    #                         if in_reasoning:
+    #                             yield " \n"
+    #                             yield "</think>"
+    #                             yield " \n\n"
+    #                             in_reasoning = False
+    #                         # 正常内容输出
+    #                         if hasattr(chunk, 'content') and chunk.content:
+    #                             yield chunk.content
+    #                 # 如果推理阶段还未关闭，最后补一个</think>
+    #                 if in_reasoning:
+    #                     yield "</think>"
+    #                     yield " \n"
+    #             except Exception as e:
+    #                 yield f"❌ 流式处理失败: {str(e)}"
+    #         else:
+    #             # 模拟流式输出
+    #             print("使用模拟流式输出")
+    #             try:
+    #                 response = llm.invoke(messages) if hasattr(llm, 'invoke') else llm(messages)
+    #                 content = response.content if hasattr(response, 'content') else str(response)
+                    
+    #                 # 按字符流式输出
+    #                 for char in content:
+    #                     yield char
+    #             except Exception as e:
+    #                 yield f"❌ 处理失败: {str(e)}"
+                    
+    #     except Exception as e:
+    #         yield f"❌ 模型调用失败: {str(e)}"
     
     def process_document(self, file_path: str, file_type: str) -> List:
         """处理文档并返回分割后的文档块"""
