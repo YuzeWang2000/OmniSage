@@ -99,11 +99,12 @@ class DatabaseService:
     def get_conversation_by_id(conversation_id: int, user_id: int, db: Session) -> Optional[models.Conversation]:
         """根据ID获取对话（确保属于指定用户）"""
         try:
-            return db.query(models.Conversation).filter(
+            conversation = db.query(models.Conversation).filter(
                 models.Conversation.id == conversation_id,
                 models.Conversation.user_id == user_id,
                 models.Conversation.is_active == True
             ).first()
+            return conversation
         except Exception as e:
             print(f"获取对话失败: {str(e)}")
             return None
@@ -116,8 +117,10 @@ class DatabaseService:
                 models.Conversation.id == conversation_id,
                 models.Conversation.user_id == user_id
             ).first()
+            
             if conversation:
                 conversation.is_active = False
+                conversation.updated_at = datetime.now()
                 db.commit()
                 return True
             return False
@@ -134,6 +137,7 @@ class DatabaseService:
                 models.Conversation.id == conversation_id,
                 models.Conversation.user_id == user_id
             ).first()
+            
             if conversation:
                 conversation.title = title
                 conversation.updated_at = datetime.now()
@@ -149,7 +153,8 @@ class DatabaseService:
     def get_user_by_username(username: str, db: Session) -> Optional[models.User]:
         """根据用户名获取用户"""
         try:
-            return db.query(models.User).filter(models.User.username == username).first()
+            user = db.query(models.User).filter(models.User.username == username).first()
+            return user
         except Exception as e:
             print(f"获取用户失败: {str(e)}")
             return None
@@ -158,7 +163,10 @@ class DatabaseService:
     def create_user(username: str, hashed_password: str, db: Session) -> Optional[models.User]:
         """创建新用户"""
         try:
-            user = models.User(username=username, hashed_password=hashed_password)
+            user = models.User(
+                username=username,
+                hashed_password=hashed_password
+            )
             db.add(user)
             db.commit()
             db.refresh(user)
@@ -172,15 +180,15 @@ class DatabaseService:
     def get_user_by_id(user_id: int, db: Session) -> Optional[models.User]:
         """根据ID获取用户"""
         try:
-            return db.query(models.User).filter(models.User.id == user_id).first()
+            user = db.query(models.User).filter(models.User.id == user_id).first()
+            return user
         except Exception as e:
             print(f"获取用户失败: {str(e)}")
             return None
-
-    # API Key相关方法
+    
     @staticmethod
     def create_api_key(user_id: int, provider: str, api_key: str, model_name: str = None, db: Session = None) -> Optional[models.UserApiKey]:
-        """创建API key"""
+        """创建API密钥"""
         try:
             api_key_obj = models.UserApiKey(
                 user_id=user_id,
@@ -196,48 +204,53 @@ class DatabaseService:
             db.refresh(api_key_obj)
             return api_key_obj
         except Exception as e:
-            print(f"创建API key失败: {str(e)}")
+            print(f"创建API密钥失败: {str(e)}")
             db.rollback()
             return None
-
+    
     @staticmethod
     def get_user_api_keys(user_id: int, db: Session) -> List[models.UserApiKey]:
-        """获取用户的所有API keys"""
+        """获取用户的所有API密钥"""
         try:
-            return db.query(models.UserApiKey).filter(
-                models.UserApiKey.user_id == user_id
+            api_keys = db.query(models.UserApiKey).filter(
+                models.UserApiKey.user_id == user_id,
+                models.UserApiKey.is_active == True
             ).order_by(models.UserApiKey.created_at.desc()).all()
+            return api_keys
         except Exception as e:
-            print(f"获取用户API keys失败: {str(e)}")
+            print(f"获取用户API密钥失败: {str(e)}")
             return []
-
+    
     @staticmethod
     def get_user_api_key_by_provider(user_id: int, provider: str, db: Session) -> Optional[models.UserApiKey]:
-        """根据provider获取用户的API key"""
+        """根据提供商获取用户的API密钥"""
         try:
-            return db.query(models.UserApiKey).filter(
+            api_key = db.query(models.UserApiKey).filter(
                 models.UserApiKey.user_id == user_id,
-                models.UserApiKey.provider == provider
+                models.UserApiKey.provider == provider,
+                models.UserApiKey.is_active == True
             ).first()
+            return api_key
         except Exception as e:
-            print(f"获取用户API key失败: {str(e)}")
+            print(f"获取用户API密钥失败: {str(e)}")
             return None
-
+    
     @staticmethod
     def get_api_key_by_id(api_key_id: int, user_id: int, db: Session) -> Optional[models.UserApiKey]:
-        """根据ID获取API key（确保属于指定用户）"""
+        """根据ID获取API密钥（确保属于指定用户）"""
         try:
-            return db.query(models.UserApiKey).filter(
+            api_key = db.query(models.UserApiKey).filter(
                 models.UserApiKey.id == api_key_id,
                 models.UserApiKey.user_id == user_id
             ).first()
+            return api_key
         except Exception as e:
-            print(f"获取API key失败: {str(e)}")
+            print(f"获取API密钥失败: {str(e)}")
             return None
-
+    
     @staticmethod
     def update_api_key(api_key_id: int, api_key: str, model_name: str = None, is_active: bool = True, db: Session = None) -> Optional[models.UserApiKey]:
-        """更新API key"""
+        """更新API密钥"""
         try:
             api_key_obj = db.query(models.UserApiKey).filter(
                 models.UserApiKey.id == api_key_id
@@ -249,30 +262,240 @@ class DatabaseService:
                     api_key_obj.model_name = model_name
                 api_key_obj.is_active = is_active
                 api_key_obj.updated_at = datetime.now()
-                
                 db.commit()
                 db.refresh(api_key_obj)
                 return api_key_obj
             return None
         except Exception as e:
-            print(f"更新API key失败: {str(e)}")
+            print(f"更新API密钥失败: {str(e)}")
             db.rollback()
             return None
-
+    
     @staticmethod
     def delete_api_key(api_key_id: int, db: Session) -> bool:
-        """删除API key"""
+        """删除API密钥"""
         try:
-            api_key_obj = db.query(models.UserApiKey).filter(
+            api_key = db.query(models.UserApiKey).filter(
                 models.UserApiKey.id == api_key_id
             ).first()
             
-            if api_key_obj:
-                db.delete(api_key_obj)
+            if api_key:
+                db.delete(api_key)
                 db.commit()
                 return True
             return False
         except Exception as e:
-            print(f"删除API key失败: {str(e)}")
+            print(f"删除API密钥失败: {str(e)}")
+            db.rollback()
+            return False
+
+    # 知识库相关方法
+    @staticmethod
+    def create_knowledge_base(user_id: int, name: str, description: str = None, 
+                            embedding_model: str = "nomic-embed-text", vector_db_path: str = None, 
+                            db: Session = None) -> Optional[models.KnowledgeBase]:
+        """创建知识库"""
+        try:
+            knowledge_base = models.KnowledgeBase(
+                user_id=user_id,
+                name=name,
+                description=description,
+                embedding_model=embedding_model,
+                vector_db_path=vector_db_path,
+                file_count=0,
+                document_count=0,
+                is_active=True,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+            db.add(knowledge_base)
+            db.commit()
+            db.refresh(knowledge_base)
+            return knowledge_base
+        except Exception as e:
+            print(f"创建知识库失败: {str(e)}")
+            db.rollback()
+            return None
+    
+    @staticmethod
+    def get_knowledge_base_by_id(knowledge_base_id: int, user_id: int, db: Session) -> Optional[models.KnowledgeBase]:
+        """根据ID获取知识库（确保属于指定用户）"""
+        try:
+            knowledge_base = db.query(models.KnowledgeBase).filter(
+                models.KnowledgeBase.id == knowledge_base_id,
+                models.KnowledgeBase.user_id == user_id,
+                models.KnowledgeBase.is_active == True
+            ).first()
+            return knowledge_base
+        except Exception as e:
+            print(f"获取知识库失败: {str(e)}")
+            return None
+    
+    @staticmethod
+    def get_knowledge_base_by_name(user_id: int, name: str, db: Session) -> Optional[models.KnowledgeBase]:
+        """根据名称获取知识库（确保属于指定用户）"""
+        try:
+            knowledge_base = db.query(models.KnowledgeBase).filter(
+                models.KnowledgeBase.user_id == user_id,
+                models.KnowledgeBase.name == name,
+                models.KnowledgeBase.is_active == True
+            ).first()
+            return knowledge_base
+        except Exception as e:
+            print(f"获取知识库失败: {str(e)}")
+            return None
+    
+    @staticmethod
+    def get_user_knowledge_bases(user_id: int, db: Session) -> List[models.KnowledgeBase]:
+        """获取用户的所有知识库"""
+        try:
+            print(f"正在查询用户 {user_id} 的知识库...")
+            knowledge_bases = db.query(models.KnowledgeBase).filter(
+                models.KnowledgeBase.user_id == user_id,
+                models.KnowledgeBase.is_active == True
+            ).order_by(models.KnowledgeBase.updated_at.desc()).all()
+            print(f"查询到 {len(knowledge_bases)} 个知识库")
+            return knowledge_bases
+        except Exception as e:
+            print(f"获取用户知识库失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    @staticmethod
+    def get_user_active_knowledge_bases(user_id: int, db: Session) -> List[models.KnowledgeBase]:
+        """获取用户的所有活跃知识库"""
+        try:
+            knowledge_bases = db.query(models.KnowledgeBase).filter(
+                models.KnowledgeBase.user_id == user_id,
+                models.KnowledgeBase.is_active == True
+            ).all()
+            return knowledge_bases
+        except Exception as e:
+            print(f"获取用户活跃知识库失败: {str(e)}")
+            return []
+    
+    @staticmethod
+    def delete_knowledge_base(knowledge_base_id: int, user_id: int, db: Session) -> bool:
+        """删除知识库（软删除）"""
+        try:
+            knowledge_base = db.query(models.KnowledgeBase).filter(
+                models.KnowledgeBase.id == knowledge_base_id,
+                models.KnowledgeBase.user_id == user_id
+            ).first()
+            
+            if knowledge_base:
+                knowledge_base.is_active = False
+                knowledge_base.updated_at = datetime.now()
+                db.commit()
+                return True
+            return False
+        except Exception as e:
+            print(f"删除知识库失败: {str(e)}")
+            db.rollback()
+            return False
+    
+    @staticmethod
+    def create_knowledge_file(knowledge_base_id: int, filename: str, original_filename: str,
+                            file_path: str, file_size: int, file_type: str, document_count: int,
+                            is_processed: bool = True, db: Session = None) -> Optional[models.KnowledgeFile]:
+        """创建知识库文件记录"""
+        try:
+            knowledge_file = models.KnowledgeFile(
+                knowledge_base_id=knowledge_base_id,
+                filename=filename,
+                original_filename=original_filename,
+                file_path=file_path,
+                file_size=file_size,
+                file_type=file_type,
+                document_count=document_count,
+                is_processed=is_processed,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+            db.add(knowledge_file)
+            db.commit()
+            db.refresh(knowledge_file)
+            return knowledge_file
+        except Exception as e:
+            print(f"创建知识库文件记录失败: {str(e)}")
+            db.rollback()
+            return None
+    
+    @staticmethod
+    def get_knowledge_file_by_id(file_id: int, knowledge_base_id: int, user_id: int, db: Session) -> Optional[models.KnowledgeFile]:
+        """根据ID获取知识库文件（确保属于指定知识库和用户）"""
+        try:
+            knowledge_file = db.query(models.KnowledgeFile).join(models.KnowledgeBase).filter(
+                models.KnowledgeFile.id == file_id,
+                models.KnowledgeFile.knowledge_base_id == knowledge_base_id,
+                models.KnowledgeBase.user_id == user_id
+            ).first()
+            return knowledge_file
+        except Exception as e:
+            print(f"获取知识库文件失败: {str(e)}")
+            return None
+    
+    @staticmethod
+    def get_knowledge_base_files(knowledge_base_id: int, user_id: int, db: Session) -> List[models.KnowledgeFile]:
+        """获取知识库的文件列表（确保属于指定用户）"""
+        try:
+            files = db.query(models.KnowledgeFile).join(models.KnowledgeBase).filter(
+                models.KnowledgeFile.knowledge_base_id == knowledge_base_id,
+                models.KnowledgeBase.user_id == user_id
+            ).order_by(models.KnowledgeFile.created_at.desc()).all()
+            return files
+        except Exception as e:
+            print(f"获取知识库文件列表失败: {str(e)}")
+            return []
+    
+    @staticmethod
+    def delete_knowledge_file(file_id: int, knowledge_base_id: int, user_id: int, db: Session) -> bool:
+        """删除知识库文件"""
+        try:
+            knowledge_file = db.query(models.KnowledgeFile).join(models.KnowledgeBase).filter(
+                models.KnowledgeFile.id == file_id,
+                models.KnowledgeFile.knowledge_base_id == knowledge_base_id,
+                models.KnowledgeBase.user_id == user_id
+            ).first()
+            
+            if knowledge_file:
+                db.delete(knowledge_file)
+                db.commit()
+                return True
+            return False
+        except Exception as e:
+            print(f"删除知识库文件失败: {str(e)}")
+            db.rollback()
+            return False
+    
+    @staticmethod
+    def update_knowledge_base_stats(knowledge_base_id: int, db: Session) -> bool:
+        """更新知识库统计信息"""
+        try:
+            # 获取知识库
+            knowledge_base = db.query(models.KnowledgeBase).filter(
+                models.KnowledgeBase.id == knowledge_base_id
+            ).first()
+            
+            if knowledge_base:
+                # 统计文件数量和文档数量
+                files = db.query(models.KnowledgeFile).filter(
+                    models.KnowledgeFile.knowledge_base_id == knowledge_base_id
+                ).all()
+                
+                file_count = len(files)
+                document_count = sum(file.document_count for file in files)
+                
+                # 更新统计信息
+                knowledge_base.file_count = file_count
+                knowledge_base.document_count = document_count
+                knowledge_base.updated_at = datetime.now()
+                
+                db.commit()
+                return True
+            return False
+        except Exception as e:
+            print(f"更新知识库统计信息失败: {str(e)}")
             db.rollback()
             return False 

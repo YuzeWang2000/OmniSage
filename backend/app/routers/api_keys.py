@@ -86,44 +86,45 @@ def get_user_api_keys(user_id: int, db: Session = Depends(get_db)):
             detail=f"获取API keys失败: {str(e)}"
         )
 
-@router.put("/{api_key_id}", response_model=schemas.ApiKeyResponse)
-def update_api_key(
-    api_key_id: int, 
-    api_key_update: schemas.ApiKeyUpdate, 
-    user_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    更新API key
-    """
-    try:
-        # 检查API key是否存在且属于该用户
-        api_key = DatabaseService.get_api_key_by_id(api_key_id, user_id, db)
-        if not api_key:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="API key不存在或无权限访问"
-            )
-        
-        # 更新API key
-        updated_api_key = DatabaseService.update_api_key(
-            api_key_id=api_key_id,
-            api_key=api_key_update.api_key,
-            model_name=api_key_update.model_name,
-            is_active=api_key_update.is_active,
-            db=db
-        )
-        
-        return updated_api_key
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"更新API key失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"更新API key失败: {str(e)}"
-        )
+# 已移除未使用的更新API key路由
+# @router.put("/{api_key_id}", response_model=schemas.ApiKeyResponse)
+# def update_api_key(
+#     api_key_id: int, 
+#     api_key_update: schemas.ApiKeyUpdate, 
+#     user_id: int,
+#     db: Session = Depends(get_db)
+# ):
+#     """
+#     更新API key
+#     """
+#     try:
+#         # 检查API key是否存在且属于该用户
+#         api_key = DatabaseService.get_api_key_by_id(api_key_id, user_id, db)
+#         if not api_key:
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND,
+#                 detail="API key不存在或无权限访问"
+#             )
+#         
+#         # 更新API key
+#         updated_api_key = DatabaseService.update_api_key(
+#             api_key_id=api_key_id,
+#             api_key=api_key_update.api_key,
+#             model_name=api_key_update.model_name,
+#             is_active=api_key_update.is_active,
+#             db=db
+#         )
+#         
+#         return updated_api_key
+#         
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"更新API key失败: {str(e)}")
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"更新API key失败: {str(e)}"
+#         )
 
 @router.delete("/{api_key_id}")
 def delete_api_key(api_key_id: int, user_id: int, db: Session = Depends(get_db)):

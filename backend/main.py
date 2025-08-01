@@ -4,6 +4,7 @@ from app.database import Base, engine
 from app.routers import auth, chat, rag, conversation, api_keys
 from fastapi import APIRouter
 import ollama
+from app.services.llm_service import online_models
 # 初始化数据库表
 Base.metadata.create_all(bind=engine)
 
@@ -16,7 +17,6 @@ app.include_router(rag.router)
 app.include_router(conversation.router)
 app.include_router(api_keys.router)
 
-online_models = ["deepseek-chat","deepseek-reasoner"]
 def is_embedding_model(model_obj):
     # 1. 名称包含 embed
     if "embed" in model_obj.model.lower():

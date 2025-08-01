@@ -89,6 +89,41 @@ def get_user_conversations(user_id: int, db: Session = Depends(get_db)):
             detail="获取对话列表失败"
         )
 
+@router.get("/{conversation_id}/messages", response_model=schemas.ChatHistoryResponse)
+def get_conversation_messages(conversation_id: int, user_id: int, db: Session = Depends(get_db)):
+    """获取指定对话的聊天历史"""
+    try:
+        # 验证对话是否存在且属于该用户
+        conversation = DatabaseService.get_conversation_by_id(conversation_id, user_id, db)
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在或无权限访问"
+            )
+        
+        # 获取聊天历史
+        messages = DatabaseService.get_chat_history(conversation_id, db)
+        message_responses = []
+        for msg in messages:
+            message_responses.append(schemas.ChatMessageResponse(
+                role=msg['role'],
+                content=msg['content'],
+            ))
+        
+        return schemas.ChatHistoryResponse(
+            conversation_id=conversation_id,
+            messages=message_responses
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"获取聊天历史失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取聊天历史失败"
+        )
+
 @router.delete("/{conversation_id}")
 def delete_conversation(conversation_id: int, user_id: int, db: Session = Depends(get_db)):
     """删除对话"""
@@ -111,24 +146,3 @@ def delete_conversation(conversation_id: int, user_id: int, db: Session = Depend
             detail="删除对话失败"
         )
 
-@router.put("/{conversation_id}/title")
-def update_conversation_title(conversation_id: int, user_id: int, title: str, db: Session = Depends(get_db)):
-    """更新对话标题"""
-    try:
-        success = DatabaseService.update_conversation_title(conversation_id, user_id, title, db)
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="对话不存在或无权限修改"
-            )
-        
-        return {"message": "标题更新成功"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"更新对话标题失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="更新标题失败"
-        ) 
