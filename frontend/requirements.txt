@@ -1,4 +1,0 @@
-gradio
-requests
-# brew install ffmpeg
-vosk

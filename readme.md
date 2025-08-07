@@ -35,18 +35,30 @@ OmniSage/
 │   ├── chroma_db/          # 向量数据库存储
 │   ├── uploaded_files/     # 上传文件存储
 │   ├── wiki_data/          # 维基百科数据
+│   ├── pyproject.toml      # 后端依赖配置
 │   └── main.py            # 后端启动文件
 ├── frontend/               # 前端服务
 │   ├── app.py             # 前端启动文件
+│   ├── pyproject.toml     # 前端依赖配置
 │   └── vosk-model-small-cn-0.22/  # 语音识别模型
-└── requirements.txt        # 项目依赖
+└── readme.md              # 项目说明文档
 ```
 
 ## 快速开始
 
 ### 1. 环境准备
 
-确保已安装 Python 3.8+ 和 Conda。
+确保已安装 Python 3.11+ 和 uv。
+
+#### 安装 uv
+
+```bash
+# 使用 pip 安装 uv
+pip install uv
+
+# 或者使用官方安装脚本
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 ### 2. 克隆项目
 
@@ -55,57 +67,45 @@ git clone <repository-url>
 cd OmniSage
 ```
 
-### 3. 创建 Conda 环境
+### 3. 安装依赖
+
+#### 安装后端依赖
 
 ```bash
-# 创建后端环境
-conda create -n Omni-backend python=3.9
-conda activate Omni-backend
-
-# 创建前端环境
-conda create -n Omni-frontend python=3.9
-conda activate Omni-frontend
-```
-
-### 4. 安装依赖
-
-```bash
-# 安装后端依赖
-conda activate Omni-backend
 cd backend
-pip install -r requirements.txt
-
-# 安装前端依赖
-conda activate Omni-frontend
-cd frontend
-pip install -r requirements.txt
+uv sync
 ```
 
-### 5. 初始化数据库
+#### 安装前端依赖
 
 ```bash
-# 激活后端环境
-conda activate Omni-backend
+cd frontend
+uv sync
+```
+
+### 4. 初始化数据库
+
+```bash
+# 进入后端目录
 cd backend
 
 # 创建数据库表
-python scripts/create_tables.py
+uv run python scripts/create_tables.py
 
 # 初始化维基百科数据（可选）
-python scripts/init_wiki_data.py
+uv run python scripts/init_wiki_data.py
 ```
 
-### 6. 启动服务
+### 5. 启动服务
 
 #### 启动后端服务
 
 ```bash
-# 激活后端环境
-conda activate Omni-backend
+# 进入后端目录
 cd backend
 
 # 启动后端服务
-python main.py
+uv run python main.py
 ```
 
 后端服务将在 `http://localhost:8000` 启动。
@@ -113,12 +113,11 @@ python main.py
 #### 启动前端服务
 
 ```bash
-# 激活前端环境
-conda activate Omni-frontend
+# 进入前端目录
 cd frontend
 
 # 启动前端服务
-python app.py
+uv run python app.py
 ```
 
 前端服务将在 `http://localhost:7860` 启动。
@@ -134,14 +133,43 @@ python app.py
 ### 使用示例
 
 ```bash
+# 进入后端目录
+cd backend
+
 # 创建数据库表
-python scripts/create_tables.py
+uv run python scripts/create_tables.py
 
 # 初始化维基百科数据
-python scripts/init_wiki_data.py
+uv run python scripts/init_wiki_data.py
 
 # 重置项目数据（会清空所有数据）
-python scripts/reset_project_data.py
+uv run python scripts/reset_project_data.py
+```
+
+## 依赖管理
+
+本项目使用 uv 进行依赖管理，主要配置文件：
+
+- `backend/pyproject.toml`: 后端依赖配置
+- `frontend/pyproject.toml`: 前端依赖配置
+
+### 常用 uv 命令
+
+```bash
+# 安装依赖
+uv sync
+
+# 添加新依赖
+uv add package_name
+
+# 添加开发依赖
+uv add --dev package_name
+
+# 运行 Python 脚本
+uv run python script.py
+
+# 激活虚拟环境
+uv shell
 ```
 
 ## API 文档
@@ -211,8 +239,8 @@ SECRET_KEY=your_secret_key
    - 验证模型路径配置
 
 3. **依赖安装失败**
-   - 确保使用正确的 Python 版本
-   - 尝试使用 conda 安装依赖
+   - 确保使用正确的 Python 版本（3.11+）
+   - 尝试重新运行 `uv sync`
 
 ### 日志查看
 
@@ -233,6 +261,12 @@ SECRET_KEY=your_secret_key
 - 遵循 PEP 8 代码风格
 - 添加适当的注释和文档
 
+### 依赖管理最佳实践
+
+- 使用 `uv add` 添加新依赖
+- 定期运行 `uv sync` 更新依赖
+- 在 `pyproject.toml` 中明确指定版本范围
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
@@ -246,4 +280,4 @@ SECRET_KEY=your_secret_key
 
 ---
 
-**注意**: 首次使用前请确保完成所有初始化步骤，特别是数据库表的创建。
+**注意**: 首次使用前请确保完成所有初始化步骤，特别是数据库表的创建。项目使用 uv 进行依赖管理，请确保已正确安装 uv。
