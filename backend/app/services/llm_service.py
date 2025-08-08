@@ -103,14 +103,13 @@ class LLMController:
             else:
                 raise ValueError(f"不支持的模型模式: {mode}")
 
-    
-    def get_rag_context(self, message: str, user_id: int = None, db = None) -> str:
-        """从向量数据库中检索相关文档（传统方法）"""
-        if not user_id or not db:
-            print("没有用户ID或数据库")
-            return ""
-        from .knowledgebase_service import knowledge_base_service
-        return knowledge_base_service.get_rag_context(user_id, message, top_k=3, db=db)
+    # def get_rag_context(self, message: str, user_id: int = None, db = None) -> str:
+    #     """从向量数据库中检索相关文档（传统方法）"""
+    #     if not user_id or not db:
+    #         print("没有用户ID或数据库")
+    #         return ""
+    #     from .knowledgebase_service import knowledge_base_service
+    #     return knowledge_base_service.get_rag_context(user_id, message, top_k=3, db=db)
     
     def create_rag_chain(
         self,
@@ -319,8 +318,14 @@ class LLMController:
                         use_wiki=use_wiki,  # 传递Wiki参数
                         db=db
                     )
-                
+                # rag_test = True
+                # if rag_test:
+                #     from .knowledgebase_service import knowledge_base_service
+                #     rag_context = knowledge_base_service.get_rag_context(user_id=user_id,message=message, top_k=top_k, db=db)
                 if rag_chain:
+                    # print("=" * 20, "RAG Chain处理", "=" * 20)
+                    # print(rag_chain)
+                    # print("=" * 20, "RAG Chain处理", "=" * 20)
                     # 流式处理RAG Chain
                     if hasattr(rag_chain, 'stream'):
                         print("使用RAG Chain流式API")
@@ -545,152 +550,68 @@ class LLMController:
                             yield f"❌ 简单聊天Chain处理失败: {str(e)}"
                 else:
                     # 如果简单聊天Chain创建失败，回退到传统方式
-                    print("简单聊天Chain创建失败，回退到传统方式")
-                    yield from self._process_message_traditional(payload, user_id, db)
+                    print("简单聊天Chain创建失败")
+                    raise Exception("简单聊天Chain创建失败，请检查模型配置")
                     
         except Exception as e:
             yield f"❌ Chain处理失败: {str(e)}"
     
-    # def _process_message_traditional(self, payload: Dict[str, Any], user_id: int = None, db = None):
-    #     """
-    #     传统的消息处理方式（作为回退方案）
-    #     """
-    #     message = payload.get("message", "")
-    #     model_name = payload.get("model", settings.DEFAULT_MODEL)
-    #     mode = payload.get("mode", "chat")
-    #     use_rag = payload.get("use_rag", False)
-    #     chat_history = payload.get("chat_history", [])
-        
-    #     # 构建消息列表
-    #     messages = []
-        
-    #     # 添加聊天历史
-    #     for hist in chat_history:
-    #         if hist.get("role") == "user":
-    #             messages.append(HumanMessage(content=hist.get("content", "")))
-    #         elif hist.get("role") == "assistant":
-    #             messages.append(AIMessage(content=hist.get("content", "")))
-        
-    #     # 处理当前消息
-    #     if use_rag:
-    #         print("=" * 20, "传统RAG处理", "=" * 20)        
-    #         rag_context = self.get_rag_context(message, user_id, db)
-    #         print(f"RAG上下文: {rag_context}")
-    #         if rag_context:
-    #             enhanced_message = message + rag_context
-    #             messages.append(HumanMessage(content=enhanced_message))
-    #         else:
-    #             messages.append(HumanMessage(content=message))
-    #     else:
-    #         messages.append(HumanMessage(content=message))
-        
-    #     # 调用模型
+    # def process_document(self, file_path: str, file_type: str) -> List:
+    #     """处理文档并返回分割后的文档块"""
+    #     print(f"开始处理文档: {file_path}, 类型: {file_type}")
     #     try:
-    #         llm = self.get_llm(model_name, mode, user_id, db)
-    #         if hasattr(llm, 'stream'):
-    #             print("使用流式API")
-    #             # 同步流式API
+    #         # 根据文件类型选择加载器
+    #         if file_type in ['txt', 'md']:
+    #             loader = TextLoader(file_path)
+    #         elif file_type == 'pdf':
     #             try:
-    #                 in_reasoning = False 
-    #                 for chunk in llm.stream(messages):
-    #                     # 判断是否有reasoning_content
-    #                     reasoning_content = ""
-    #                     if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs.get("reasoning_content"):
-    #                         reasoning_content = chunk.additional_kwargs["reasoning_content"]
-    #                         # 推理阶段开始
-    #                         if not in_reasoning:
-    #                             yield "<think>"
-    #                             yield " \n"
-    #                             in_reasoning = True
-    #                         yield reasoning_content
-    #                     else:
-    #                         # 推理阶段结束
-    #                         if in_reasoning:
-    #                             yield " \n"
-    #                             yield "</think>"
-    #                             yield " \n\n"
-    #                             in_reasoning = False
-    #                         # 正常内容输出
-    #                         if hasattr(chunk, 'content') and chunk.content:
-    #                             yield chunk.content
-    #                 # 如果推理阶段还未关闭，最后补一个</think>
-    #                 if in_reasoning:
-    #                     yield "</think>"
-    #                     yield " \n"
-    #             except Exception as e:
-    #                 yield f"❌ 流式处理失败: {str(e)}"
+    #                 # 首先尝试使用 PyPDFLoader
+    #                 loader = PyPDFLoader(file_path)
+    #             except Exception:
+    #                 # 如果失败,使用 UnstructuredPDFLoader 作为后备
+    #                 print("PyPDFLoader 失败,使用 UnstructuredPDFLoader")
+    #                 loader = UnstructuredPDFLoader(file_path)
+    #         elif file_type in ['docx', 'doc']:
+    #             try:
+    #                 # 首先尝试使用 Docx2txtLoader
+    #                 loader = Docx2txtLoader(file_path)
+    #             except Exception:
+    #                 # 如果失败,使用 UnstructuredWordDocumentLoader 作为后备
+    #                 print("Docx2txtLoader 失败,使用 UnstructuredWordDocumentLoader")
+    #                 loader = UnstructuredWordDocumentLoader(file_path)
     #         else:
-    #             # 模拟流式输出
-    #             print("使用模拟流式输出")
-    #             try:
-    #                 response = llm.invoke(messages) if hasattr(llm, 'invoke') else llm(messages)
-    #                 content = response.content if hasattr(response, 'content') else str(response)
-                    
-    #                 # 按字符流式输出
-    #                 for char in content:
-    #                     yield char
-    #             except Exception as e:
-    #                 yield f"❌ 处理失败: {str(e)}"
-                    
+    #             # 对于其他类型文件,使用通用的 UnstructuredFileLoader
+    #             loader = UnstructuredFileLoader(file_path)
+            
+    #         documents = loader.load()
+            
+    #         # 文本分割
+    #         text_splitter = RecursiveCharacterTextSplitter(
+    #             chunk_size=settings.CHUNK_SIZE,
+    #             chunk_overlap=settings.CHUNK_OVERLAP,
+    #             length_function=len,
+    #         )
+            
+    #         return text_splitter.split_documents(documents)
     #     except Exception as e:
-    #         yield f"❌ 模型调用失败: {str(e)}"
+    #         print(f"文档处理失败: {str(e)}")
+    #         return []
     
-    def process_document(self, file_path: str, file_type: str) -> List:
-        """处理文档并返回分割后的文档块"""
-        print(f"开始处理文档: {file_path}, 类型: {file_type}")
-        try:
-            # 根据文件类型选择加载器
-            if file_type in ['txt', 'md']:
-                loader = TextLoader(file_path)
-            elif file_type == 'pdf':
-                try:
-                    # 首先尝试使用 PyPDFLoader
-                    loader = PyPDFLoader(file_path)
-                except Exception:
-                    # 如果失败,使用 UnstructuredPDFLoader 作为后备
-                    print("PyPDFLoader 失败,使用 UnstructuredPDFLoader")
-                    loader = UnstructuredPDFLoader(file_path)
-            elif file_type in ['docx', 'doc']:
-                try:
-                    # 首先尝试使用 Docx2txtLoader
-                    loader = Docx2txtLoader(file_path)
-                except Exception:
-                    # 如果失败,使用 UnstructuredWordDocumentLoader 作为后备
-                    print("Docx2txtLoader 失败,使用 UnstructuredWordDocumentLoader")
-                    loader = UnstructuredWordDocumentLoader(file_path)
-            else:
-                # 对于其他类型文件,使用通用的 UnstructuredFileLoader
-                loader = UnstructuredFileLoader(file_path)
-            
-            documents = loader.load()
-            
-            # 文本分割
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=settings.CHUNK_SIZE,
-                chunk_overlap=settings.CHUNK_OVERLAP,
-                length_function=len,
-            )
-            
-            return text_splitter.split_documents(documents)
-        except Exception as e:
-            print(f"文档处理失败: {str(e)}")
-            return []
-    
-    def add_documents_to_vectorstore(self, documents: List) -> bool:
-        """将文档添加到向量数据库"""
-        try:
-            vectorstore = self.get_vectorstore()
-            if vectorstore and documents:
-                vectorstore.add_documents(documents)
-                print(f"成功添加 {len(documents)} 条文档到向量数据库")
-                for doc in documents:
-                    print(doc)
-                print("=" * 20, "向量数据库添加文档成功", "=" * 20)
+    # def add_documents_to_vectorstore(self, documents: List) -> bool:
+    #     """将文档添加到向量数据库"""
+    #     try:
+    #         vectorstore = self.get_vectorstore()
+    #         if vectorstore and documents:
+    #             vectorstore.add_documents(documents)
+    #             print(f"成功添加 {len(documents)} 条文档到向量数据库")
+    #             for doc in documents:
+    #                 print(doc)
+    #             print("=" * 20, "向量数据库添加文档成功", "=" * 20)
                 
-                return True
-        except Exception as e:
-            print(f"添加文档到向量数据库失败: {str(e)}")
-        return False
+    #             return True
+    #     except Exception as e:
+    #         print(f"添加文档到向量数据库失败: {str(e)}")
+    #     return False
 
 # 全局LLM控制器实例
 llm_controller = LLMController()

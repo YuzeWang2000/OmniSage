@@ -324,16 +324,15 @@ class KnowledgeBaseService:
                 persist_directory=vector_db_path,
                 embedding_function=embeddings
             )
-            
             retriever = vectorstore.as_retriever(
-                search_type="similarity", 
-                search_kwargs={"k": top_k}
+                search_type="similarity_score_threshold", 
+                search_kwargs={"k": top_k, "score_threshold": 0.8}  # 添加相似度阈值
             )
             docs = retriever.get_relevant_documents(query)
             
             results = []
             for doc in docs:
-                results.append((doc, 1.0))  # 简化处理，实际可以获取相似度分数
+                results.append((doc.page_content, 1.0))  # 简化处理，实际可以获取相似度分数
             
             return results
         except Exception as e:
