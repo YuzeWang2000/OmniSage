@@ -6,6 +6,8 @@ from langchain.retrievers.document_compressors.base import BaseDocumentCompresso
 from pydantic import Field, PrivateAttr
 import logging
 
+import platform
+import torch
 logger = logging.getLogger(__name__)
 
 try:
@@ -37,7 +39,12 @@ class LangchainReranker(BaseDocumentCompressor):
                  ):
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             raise ImportError("sentence_transformers is required for LangchainReranker")
-            
+                # 根据操作系统设置设备
+
+        if platform.system() == "Darwin":  # macOS
+            device = "mps"
+        else:  # 其他系统
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         super().__init__(
             top_n=top_n,
             model_name_or_path=model_name_or_path,
