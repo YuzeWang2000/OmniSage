@@ -52,7 +52,7 @@ backend/
 │   ├── init_wiki_data.py        # Wiki 数据初始化
 │   └── reset_project_data.py    # 项目数据重置
 ├── chroma_db/                    # Chroma 向量数据库
-├── wiki_data/                    # Wiki 数据存储
+├── wiki_data/                    # Wiki 数据存储 在wiki_service.py中修改存储路径
 ├── uploaded_files/               # 用户上传文件
 ├── main.py                       # 应用入口
 ├── pyproject.toml               # 依赖配置
@@ -98,7 +98,7 @@ uv run python scripts/create_tables.py
 ### 4. 启动服务
 
 ```bash
-uv run python main.py
+uv run uvicorn main:app --reload
 ```
 
 服务将在 `http://localhost:8000` 启动。

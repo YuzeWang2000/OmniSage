@@ -105,7 +105,7 @@ uv run python scripts/init_wiki_data.py
 cd backend
 
 # 启动后端服务
-uv run python main.py
+uv run uvicorn main:app --reload
 ```
 
 后端服务将在 `http://localhost:8000` 启动。
