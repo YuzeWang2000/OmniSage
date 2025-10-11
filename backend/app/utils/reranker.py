@@ -46,7 +46,7 @@ class LangchainReranker(BaseDocumentCompressor):
             batch_size=batch_size,
             num_workers=num_workers,
         )
-        
+        print(f"初始化LangchainReranker，模型: {model_name_or_path}, 设备: {device}, 最大长度: {max_length}, 批次大小: {batch_size}, 工作进程数: {num_workers}")
         try:
             self._model = CrossEncoder(
                 model_name_or_path=model_name_or_path, 
