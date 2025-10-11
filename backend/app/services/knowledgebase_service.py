@@ -615,7 +615,7 @@ class KnowledgeBaseService:
             
             # 获取用户的第一个知识库（简化处理，实际可以支持多知识库）
             knowledge_bases = DatabaseService.get_user_knowledge_bases(user_id, db)
-            
+            print("用户知识库:", knowledge_bases)
             if not knowledge_bases:
                 print(f"用户 {user_id} 没有知识库")
                 return None
@@ -623,7 +623,9 @@ class KnowledgeBaseService:
             # 使用第一个知识库
             kb = knowledge_bases[0]
             vector_db_path = kb.vector_db_path
-            
+            print(f"使用知识库 '{kb.name}' 的向量数据库: {vector_db_path}")
+            print("用户的数据库有：", knowledge_bases)
+
             # 创建RAG Chain
             rag_chain = self.rag_chain_service.create_rag_chain(
                 vector_db_path=vector_db_path,

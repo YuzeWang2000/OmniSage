@@ -38,7 +38,7 @@ class WikiArticle:
 class WikiService:
     """统一的Wiki知识服务"""
     
-    def __init__(self, mode: str = "auto", data_dir: str = "wiki_data"):
+    def __init__(self, mode: str = "auto", data_dir: str = "/Volumes/Data/Data/wiki_data"):
         """
         初始化Wiki服务
         

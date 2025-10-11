@@ -18,15 +18,15 @@ class Settings:
     
     # 向量数据库配置
     VECTOR_DB_PATH: str = "./chroma_db"
-    CHUNK_SIZE: int = 1000
-    CHUNK_OVERLAP: int = 200
+    CHUNK_SIZE: int = 512
+    CHUNK_OVERLAP: int = 128
     
     # 文件上传配置
     UPLOAD_DIR: str = "./uploaded_files"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     
     # 聊天历史配置
-    MAX_HISTORY_LENGTH: int = 10
+    MAX_HISTORY_LENGTH: int = 5
     
     # 模型温度配置
     DEFAULT_TEMPERATURE: float = 0.7

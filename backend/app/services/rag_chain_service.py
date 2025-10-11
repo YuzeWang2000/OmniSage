@@ -59,10 +59,11 @@ class OptimizedRAGChainService:
         llm: BaseLanguageModel,
         chain_type: str = "stuff",
         use_reranker: bool = True,
-        use_title_enhance: bool = True,
+        # use_title_enhance: bool = True,
         top_k: int = 5,
         score_threshold: float = 0.5,
         use_wiki: bool = False,
+        debug_retrieval: bool = True,  # 新增：是否显示检索结果
         **kwargs
     ) -> Any:
         """
@@ -76,6 +77,8 @@ class OptimizedRAGChainService:
             use_title_enhance: 是否使用标题增强
             top_k: 检索文档数量
             score_threshold: 相似度阈值
+            use_wiki: 是否使用Wiki知识
+            debug_retrieval: 是否显示检索结果
             **kwargs: 其他参数
             
         Returns:
@@ -95,19 +98,18 @@ class OptimizedRAGChainService:
                 score_threshold=score_threshold,
                 use_reranker=use_reranker
             )
-            
-            # 创建Chain
+            # 创建带调试功能的Chain
             if chain_type == "stuff":
-                return self._create_stuff_chain(retriever, llm, use_wiki=use_wiki, **kwargs)
+                return self._create_stuff_chain(retriever, llm, use_wiki=use_wiki, debug_retrieval=debug_retrieval, **kwargs)
             elif chain_type == "map_reduce":
-                return self._create_map_reduce_chain(retriever, llm, use_wiki=use_wiki, **kwargs)
+                return self._create_map_reduce_chain(retriever, llm, use_wiki=use_wiki, debug_retrieval=debug_retrieval, **kwargs)
             elif chain_type == "refine":
-                return self._create_refine_chain(retriever, llm, use_wiki=use_wiki, **kwargs)
+                return self._create_refine_chain(retriever, llm, use_wiki=use_wiki, debug_retrieval=debug_retrieval, **kwargs)
             elif chain_type == "map_rerank":
-                return self._create_map_rerank_chain(retriever, llm, use_wiki=use_wiki, **kwargs)
+                return self._create_map_rerank_chain(retriever, llm, use_wiki=use_wiki, debug_retrieval=debug_retrieval, **kwargs)
             else:
                 logger.warning(f"不支持的chain类型: {chain_type}，使用stuff")
-                return self._create_stuff_chain(retriever, llm, use_wiki=use_wiki, **kwargs)
+                return self._create_stuff_chain(retriever, llm, use_wiki=use_wiki, debug_retrieval=debug_retrieval, **kwargs)
                 
         except Exception as e:
             logger.error(f"创建RAG Chain失败: {str(e)}")
@@ -378,10 +380,14 @@ class OptimizedRAGChainService:
         # 如果启用重排序
         if use_reranker:
             try:
+                # 首先尝试使用主要的重排序模型
                 reranker = LangchainReranker(
                     model_name_or_path="BAAI/bge-reranker-large",
                     top_n=top_k,
-                    device="cpu"
+                    device="cpu",
+                    max_length=512,  # 减小最大长度，避免张量尺寸问题
+                    batch_size=8,    # 减小批次大小
+                    num_workers=0    # 避免多进程问题
                 )
                 retriever = ContextualCompressionRetriever(
                     base_retriever=retriever,
@@ -389,12 +395,30 @@ class OptimizedRAGChainService:
                 )
                 logger.info("成功启用重排序功能")
             except Exception as e:
-                logger.warning(f"重排序初始化失败，使用基础检索器: {str(e)}")
+                logger.warning(f"重排序初始化失败: {str(e)}")
+                # 尝试使用更小的备用模型
+                try:
+                    logger.info("尝试使用备用重排序模型...")
+                    reranker = LangchainReranker(
+                        model_name_or_path="cross-encoder/ms-marco-MiniLM-L-2-v2",
+                        top_n=top_k,
+                        device="cpu",
+                        max_length=256,
+                        batch_size=4,
+                        num_workers=0
+                    )
+                    retriever = ContextualCompressionRetriever(
+                        base_retriever=retriever,
+                        base_compressor=reranker
+                    )
+                    logger.info("成功启用备用重排序功能")
+                except Exception as e2:
+                    logger.warning(f"备用重排序也失败，使用基础检索器: {str(e2)}")
         
         return retriever
     
-    def _create_stuff_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, **kwargs):
-        """创建Stuff Chain"""
+    def _create_stuff_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
+        """创建Stuff Chain - 增强版，显示检索结果"""
         from langchain.chains import create_retrieval_chain
         from langchain.chains.combine_documents import create_stuff_documents_chain
         from langchain.prompts import PromptTemplate
@@ -421,13 +445,102 @@ class OptimizedRAGChainService:
         document_chain = create_stuff_documents_chain(llm, prompt_template)
         
         # 创建检索chain
-        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+        base_retrieval_chain = create_retrieval_chain(retriever, document_chain)
         
-        # 如果启用Wiki，包装chain以增强上下文
-        if use_wiki:
-            return self._create_wiki_enhanced_chain(retrieval_chain)
-        
-        return retrieval_chain
+        # 如果启用调试，包装chain以显示检索结果
+        if debug_retrieval:
+            class DebugRetrievalChain:
+                def __init__(self, base_chain, retriever):
+                    self.base_chain = base_chain
+                    self.retriever = retriever
+                
+                def invoke(self, inputs):
+                    query = inputs.get("input", "")
+                    
+                    # 先获取检索结果
+                    retrieved_docs = self.retriever.invoke(query)
+                    
+                    # 显示检索结果
+                    print("=" * 50)
+                    print("🔍 检索结果详情:")
+                    print(f"查询: {query}")
+                    print(f"检索到 {len(retrieved_docs)} 个相关文档:")
+                    print("-" * 30)
+                    
+                    for i, doc in enumerate(retrieved_docs, 1):
+                        print(f"文档 {i}:")
+                        print(f"内容: {doc.page_content}")
+                        if hasattr(doc, 'metadata') and doc.metadata:
+                            print(f"元数据: {doc.metadata}")
+                        if hasattr(doc, 'score'):
+                            print(f"相似度分数: {doc.score}")
+                        print("-" * 30)
+                    
+                    print("=" * 50)
+                    
+                    # 调用原始chain
+                    result = self.base_chain.invoke(inputs)
+                    
+                    # 在结果中添加检索信息
+                    if isinstance(result, dict):
+                        result['retrieved_docs'] = [
+                            {
+                                'content': doc.page_content,
+                                'metadata': getattr(doc, 'metadata', {}),
+                                'score': getattr(doc, 'score', None)
+                            }
+                            for doc in retrieved_docs
+                        ]
+                        result['retrieval_count'] = len(retrieved_docs)
+                    
+                    return result
+                
+                def stream(self, inputs):
+                    query = inputs.get("input", "")
+                    print("🔍 检索结果详情:")
+                    print(f"查询: {query}") 
+                    # 先获取并显示检索结果
+                    retrieved_docs = self.retriever.invoke(query)
+                    print(f"检索到 {len(retrieved_docs)} 个相关文档:")
+                    for doc in retrieved_docs:
+                        print(f"文档内容: {doc.page_content}")
+                    # 输出检索结果信息
+                    yield f"\n🔍 **检索结果** (共找到 {len(retrieved_docs)} 个相关文档):\n"
+                    for i, doc in enumerate(retrieved_docs, 1):
+                        content_preview = doc.page_content[:150] + "..." if len(doc.page_content) > 150 else doc.page_content
+                        yield f"\n**文档 {i}**: {content_preview}\n"
+                        
+                        if hasattr(doc, 'metadata') and doc.metadata:
+                            if 'source' in doc.metadata:
+                                yield f"*来源*: {doc.metadata['source']}\n"
+                        
+                        if hasattr(doc, 'score'):
+                            yield f"*相似度*: {doc.score:.3f}\n"
+                    
+                    yield "\n" + "="*50 + "\n"
+                    yield "📝 **AI回答**:\n\n"
+                    
+                    # 流式调用原始chain
+                    for chunk in self.base_chain.stream(inputs):
+                        yield chunk
+                
+                # 添加hasattr支持，使其表现得像原始chain
+                def __getattr__(self, name):
+                    return getattr(self.base_chain, name)
+            
+            wrapped_chain = DebugRetrievalChain(base_retrieval_chain, retriever)
+            
+            # 如果启用Wiki，进一步包装
+            if use_wiki:
+                return self._create_wiki_enhanced_chain(wrapped_chain)
+            
+            return wrapped_chain
+        else:
+            # 如果不启用调试，使用原始chain
+            if use_wiki:
+                return self._create_wiki_enhanced_chain(base_retrieval_chain)
+            
+            return base_retrieval_chain
     
     def _create_wiki_enhanced_chain(self, base_chain):
         """
@@ -492,7 +605,7 @@ class OptimizedRAGChainService:
         
         return WikiEnhancedChain(base_chain, self.wiki_kb)
     
-    def _create_map_reduce_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, **kwargs):
+    def _create_map_reduce_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
         """创建Map-Reduce Chain"""
         prompt = prompt_manager.get_prompt("rag_default")
         chain = RetrievalQA.from_chain_type(
@@ -511,7 +624,7 @@ class OptimizedRAGChainService:
         
         return chain
     
-    def _create_refine_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, **kwargs):
+    def _create_refine_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
         """创建Refine Chain"""
         prompt = prompt_manager.get_prompt("rag_default")
         chain = RetrievalQA.from_chain_type(
@@ -530,7 +643,7 @@ class OptimizedRAGChainService:
         
         return chain
     
-    def _create_map_rerank_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, **kwargs):
+    def _create_map_rerank_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
         """创建Map-Rerank Chain"""
         prompt = prompt_manager.get_prompt("rag_default")
         chain = RetrievalQA.from_chain_type(
@@ -606,4 +719,65 @@ class OptimizedRAGChainService:
             "map_reduce": "Map-Reduce Chain - 分别处理每个文档，然后合并结果",
             "refine": "Refine Chain - 迭代地改进答案",
             "map_rerank": "Map-Rerank Chain - 为每个文档生成答案并排序"
-        } 
+        }
+    
+    def get_retrieval_results(
+        self,
+        query: str,
+        vector_db_path: str,
+        top_k: int = 5,
+        score_threshold: float = 0.5,
+        use_reranker: bool = True
+    ) -> Dict[str, Any]:
+        """
+        仅获取检索结果，不生成回答
+        
+        Args:
+            query: 查询文本
+            vector_db_path: 向量数据库路径
+            top_k: 检索文档数量
+            score_threshold: 相似度阈值
+            use_reranker: 是否使用重排序
+            
+        Returns:
+            检索结果详情
+        """
+        try:
+            # 加载向量数据库
+            vectorstore = self._load_vectorstore(vector_db_path)
+            if not vectorstore:
+                return {"error": "无法加载向量数据库"}
+            
+            # 创建检索器
+            retriever = self._create_retriever(
+                vectorstore, 
+                top_k=top_k, 
+                score_threshold=score_threshold,
+                use_reranker=use_reranker
+            )
+            
+            # 执行检索
+            retrieved_docs = retriever.invoke(query)
+            
+            # 格式化结果
+            results = {
+                "query": query,
+                "total_docs": len(retrieved_docs),
+                "documents": []
+            }
+            
+            for i, doc in enumerate(retrieved_docs):
+                doc_info = {
+                    "index": i + 1,
+                    "content": doc.page_content,
+                    "content_length": len(doc.page_content),
+                    "metadata": getattr(doc, 'metadata', {}),
+                    "score": getattr(doc, 'score', None)
+                }
+                results["documents"].append(doc_info)
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"检索失败: {str(e)}")
+            return {"error": f"检索失败: {str(e)}"} 
