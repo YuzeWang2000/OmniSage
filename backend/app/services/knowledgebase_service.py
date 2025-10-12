@@ -38,8 +38,8 @@ class KnowledgeBaseService:
     """
     
     def __init__(self):
-        self.base_upload_dir = settings.UPLOAD_DIR
-        self.base_vector_dir = settings.VECTOR_DB_PATH
+        self.base_upload_dir = os.path.join(os.getcwd(), settings.UPLOAD_DIR)
+        self.base_vector_dir = os.path.join(os.getcwd(), settings.VECTOR_DB_PATH)
         
         # 确保基础目录存在
         os.makedirs(self.base_upload_dir, exist_ok=True)
@@ -123,6 +123,7 @@ class KnowledgeBaseService:
         try:
             # 验证知识库是否存在且属于该用户
             knowledge_base = DatabaseService.get_knowledge_base_by_id(knowledge_base_id, user_id, db)
+            print(f"上传文件到知识库: {knowledge_base.name if knowledge_base else '未知知识库'}")
             if not knowledge_base:
                 return {
                     "success": False,
@@ -138,11 +139,11 @@ class KnowledgeBaseService:
             
             # 生成文件名和路径
             original_filename = file.filename
+            print(f"上传文件: {original_filename}, 大小: {file.size if hasattr(file, 'size') else '未知'}")
             if original_filename and '/' in original_filename:
                 actual_filename = os.path.basename(original_filename)
             else:
                 actual_filename = original_filename
-            
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_extension = actual_filename.split('.')[-1].lower() if '.' in actual_filename else 'txt'
             unique_filename = f"{timestamp}_{actual_filename}"
@@ -156,6 +157,8 @@ class KnowledgeBaseService:
             
             # 处理文档
             documents = self._process_document(file_path, file_extension)
+            print(f"处理后的文档数量: {len(documents)}")
+            print(f"文档内容示例: {documents[0].page_content[:100] if documents else '无内容'}")
             if not documents:
                 return {
                     "success": False,
@@ -264,11 +267,14 @@ class KnowledgeBaseService:
     
     def _process_document(self, file_path: str, file_type: str) -> List[Document]:
         """处理文档并返回分割后的文档块，使用优化的文本分割和标题增强"""
-        print(f"开始处理文档: {file_path}, 类型: {file_type}")
         try:
             # 根据文件类型选择加载器
             if file_type in ['txt', 'md']:
-                loader = TextLoader(file_path)
+                try:
+                    loader = TextLoader(file_path, encoding="utf-8")
+                except Exception as e:
+                    print(f"TextLoader 加载失败: {str(e)}")
+                    loader = UnstructuredFileLoader(file_path)
             elif file_type == 'pdf':
                 try:
                     loader = PyPDFLoader(file_path)
@@ -285,7 +291,6 @@ class KnowledgeBaseService:
                 loader = UnstructuredFileLoader(file_path)
             
             documents = loader.load()
-            
             # 使用优化的文档处理（中文文本分割 + 标题增强）
             processed_documents = self.rag_chain_service.process_documents_with_enhancement(
                 documents=documents,

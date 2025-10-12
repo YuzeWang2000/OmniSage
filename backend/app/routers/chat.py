@@ -50,7 +50,7 @@ def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)
             "chat_history": chat_history,
             # Chain相关参数
             "chain_type": getattr(req, 'chain_type', 'stuff'),
-            "prompt_name": getattr(req, 'prompt_name', 'chat_default'),
+            # "prompt_name": getattr(req, 'prompt_name', 'chat_default'),
             "use_reranker": getattr(req, 'use_reranker', True),
             "top_k": getattr(req, 'top_k', 5),
             "score_threshold": getattr(req, 'score_threshold', 0.5)

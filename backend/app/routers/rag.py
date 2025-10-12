@@ -154,7 +154,7 @@ def upload_file_to_knowledge_base(knowledge_base_id: int, user_id: int = Query(.
     """
     try:
         result = knowledge_base_service.upload_file_to_knowledge_base(knowledge_base_id, user_id, file, db)
-        
+        print(f"上传文件到知识库 {knowledge_base_id} 的结果: {result}")
         if result["success"]:
             return schemas.FileUploadResponse(
                 message=result["message"],

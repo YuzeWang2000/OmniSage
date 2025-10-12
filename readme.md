@@ -49,6 +49,8 @@ OmniSage/
 ### 1. 环境准备
 
 确保已安装 Python 3.11+ 和 uv。
+确保已安装 Ollama。
+确保已安装 Mysql。
 
 #### 安装 uv
 
@@ -59,6 +61,18 @@ pip install uv
 # 或者使用官方安装脚本
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+#### 安装ollama
+安装并运行ollama
+安装：gemma3n，deepseek-r1:14b
+安装：nomic-embed-text
+```bash
+ollama pull gemma3n
+ollama pull deepseek-r1:14b
+ollama pull nomic-embed-text
+```
+#### 安装mysql
+新建database， chatdb
+新建user（默认设置为用户名：gpt，密码：gpt）
 
 ### 2. 克隆项目
 

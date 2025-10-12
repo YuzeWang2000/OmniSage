@@ -277,7 +277,9 @@ class LLMController:
         chain_type = payload.get("chain_type", "stuff")
         # 根据模式选择合适的默认prompt
         default_prompt = "generate_default" if mode == "generate" else "chat_default"
+        print(f"当前模式: {mode}, 使用RAG: {use_rag}, 使用Wiki知识: {use_wiki}, 默认Prompt: {default_prompt}")
         prompt_name = payload.get("prompt_name", default_prompt)
+        print(f"使用Prompt: {prompt_name}")
         use_reranker = payload.get("use_reranker", True)
         top_k = payload.get("top_k", 5)
         score_threshold = payload.get("score_threshold", 0.5)
@@ -398,9 +400,9 @@ class LLMController:
                         user_id=user_id,
                         db=db
                     )
-                    print("=" * 20, "生成Chain处理", "=" * 20)
+                    print("=" * 20, "此处显示生成的Chain", "=" * 20)
                     print(generation_chain)
-                    print("=" * 20, "生成Chain处理", "=" * 20)
+                    print("=" * 20, "此处显示生成的Chain", "=" * 20)
                     
                     if generation_chain:
                         # 流式处理生成Chain
@@ -426,9 +428,9 @@ class LLMController:
                                             yield "</think>"
                                             yield " \n\n"
                                             in_reasoning = False
-                                        print("=" * 20, "处理正常内容", "=" * 20)
-                                        print(chunk)
-                                        print("=" * 20, "处理正常内容", "=" * 20)
+                                        # print("=" * 20, "处理正常内容", "=" * 20)
+                                        # print(chunk)
+                                        # print("=" * 20, "处理正常内容", "=" * 20)
                                         # 正常内容输出
                                         if hasattr(chunk, 'content') and chunk.content:
                                             yield chunk.content

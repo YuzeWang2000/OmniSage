@@ -177,7 +177,7 @@ class OptimizedRAGChainService:
     def create_generation_chain(
         self,
         llm: BaseLanguageModel,
-        prompt_name: str,
+        prompt_name: str = "generate_default",
         **kwargs
     ) -> Any:
         """

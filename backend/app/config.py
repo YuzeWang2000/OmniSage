@@ -17,12 +17,12 @@ class Settings:
     DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY", "your-api-key")
     
     # 向量数据库配置
-    VECTOR_DB_PATH: str = "./chroma_db"
+    VECTOR_DB_PATH: str = "chroma_db"
     CHUNK_SIZE: int = 512
     CHUNK_OVERLAP: int = 128
     
     # 文件上传配置
-    UPLOAD_DIR: str = "./uploaded_files"
+    UPLOAD_DIR: str = "uploaded_files"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     
     # 聊天历史配置
