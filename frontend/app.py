@@ -5,8 +5,8 @@ import json
 from vosk import Model, KaldiRecognizer
 import wave
 
-API_URL = "http://localhost:8000"  # 后端地址
-
+# API_URL = "http://localhost:8000"  # 后端地址
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 # 登录函数
 def login_user(username, password):
     try:

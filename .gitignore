@@ -75,3 +75,8 @@ wiki_data/wiki_vectors/
 .env
 .env.local
 .env.production 
+
+# 项目文件
+uploaded_files/
+vosk-model-small-cn-0.22/
+*.zip

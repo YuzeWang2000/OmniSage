@@ -6,7 +6,7 @@ class Settings:
     """应用配置类"""
     
     # 数据库配置
-    DATABASE_URL: str = "mysql+pymysql://gpt:gpt@localhost/chatdb"
+    DATABASE_URL: str = "mysql+pymysql://gpt:123@localhost/chatdb"
     
     # LLM配置
     DEFAULT_MODEL: str = "gemma3n"

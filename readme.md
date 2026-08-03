@@ -73,6 +73,7 @@ ollama pull nomic-embed-text
 #### 安装mysql
 新建database， chatdb
 新建user（默认设置为用户名：gpt，密码：gpt）
+新建user，8.0.46的最短密码长度为4（默认设置为用户名：gpt，密码：1234）#
 
 ### 2. 克隆项目
 
