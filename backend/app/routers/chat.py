@@ -38,6 +38,12 @@ def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)
         
         # 获取聊天历史
         chat_history = DatabaseService.get_chat_history(req.conversation_id, db)
+        # 新建对话在首条消息发送时自动使用消息前十个字符命名。
+        if not chat_history and conversation.title == "新对话":
+            auto_title = req.message.strip()[:10] or "新对话"
+            DatabaseService.update_conversation_title(
+                req.conversation_id, req.user_id, auto_title, db
+            )
         print("req.use_wiki"+"="*20)
         print(req.use_wiki)
         # 构建LLM控制器需要的payload

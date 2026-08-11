@@ -42,6 +42,10 @@ class ConversationCreate(BaseModel):
     user_id: int
     title: str
 
+class ConversationUpdate(BaseModel):
+    user_id: int
+    title: str
+
 class ConversationResponse(BaseModel):
     id: int
     user_id: int

@@ -2,6 +2,7 @@ import gradio as gr
 import requests
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor
 from vosk import Model, KaldiRecognizer
 import wave
 
@@ -10,30 +11,41 @@ API_URL = os.getenv("API_URL", "http://localhost:8000")
 # 登录函数
 def login_user(username, password):
     try:
-        res = requests.post(f"{API_URL}/auth/login", json={"username": username, "password": password})
+        res = requests.post(
+            f"{API_URL}/auth/login",
+            json={"username": username, "password": password},
+            timeout=10,
+        )
         res.raise_for_status()
         user_data = res.json()
         user_id = user_data["user_id"]
         
-        # 登录成功后立即加载对话列表
-        conversations = get_user_conversations(user_id)
-        choices = []
+        # 三组互不依赖的数据并行加载，避免登录后串行等待多个接口。
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            conversations_future = executor.submit(get_user_conversations, user_id)
+            api_keys_future = executor.submit(get_user_api_keys, user_id)
+            knowledge_bases_future = executor.submit(fetch_user_knowledge_bases, user_id)
+            conversations = conversations_future.result()
+            api_keys = api_keys_future.result()
+            knowledge_base_data = knowledge_bases_future.result()
+
         default_conversation_id = None
         
         for conv in conversations:
-            title = f"{conv['title']} ({conv['message_count']}条消息)"
-            choices.append((title, conv['id']))
             if conv['title'] == "默认对话":
                 default_conversation_id = conv['id']
         
         # 如果没有默认对话，选择第一个对话
-        if not default_conversation_id and choices:
-            default_conversation_id = choices[0][1]
-        
-        chat_history = load_conversation_history(default_conversation_id, user_id)
+        if not default_conversation_id and conversations:
+            default_conversation_id = conversations[0]["id"]
 
-        # 加载API key列表
-        api_keys = get_user_api_keys(user_id)
+        recent_choices, more_choices = split_conversation_choices(
+            conversations, default_conversation_id
+        )
+        
+        # 首页登录不需要立即读取消息，进入聊天页时再按需加载。
+        chat_history = []
+
         api_key_choices = []
         for key in api_keys:
             display_text = f"{key['provider']}"
@@ -41,8 +53,10 @@ def login_user(username, password):
                 display_text += f" ({key['model_name']})"
             api_key_choices.append((display_text, key['id']))
         
-        # 加载知识库列表
-        knowledge_bases = get_user_knowledge_bases(user_id)
+        knowledge_bases = format_knowledge_base_choices(knowledge_base_data)
+        search_knowledge_bases = format_knowledge_base_choices(
+            knowledge_base_data, compact=True
+        )
         
         return (
             user_id,
@@ -51,11 +65,13 @@ def login_user(username, password):
             gr.update(visible=False),  # 隐藏登录框
             gr.update(visible=True),   # 显示聊天区
             gr.update(visible=True),   # 显示退出按钮
-            gr.update(choices=choices, value=default_conversation_id),  # 更新对话列表
+            gr.update(choices=recent_choices, value=default_conversation_id),
+            gr.update(choices=more_choices, value=None),
             default_conversation_id,  # 设置默认对话ID
             gr.update(choices=api_key_choices, value=None),  # 更新API key列表
             chat_history,  # 返回聊天历史
-            gr.update(choices=knowledge_bases, value=None)  # 更新知识库列表
+            gr.update(choices=knowledge_bases, value=None),  # 更新知识库卡片
+            gr.update(choices=search_knowledge_bases, value=None),
         )
     except Exception as e:
         return (None, 
@@ -65,9 +81,11 @@ def login_user(username, password):
                 gr.update(visible=False), 
                 gr.update(visible=False), 
                 gr.update(choices=[], value=None), 
+                gr.update(choices=[], value=None),
                 None, 
                 gr.update(choices=[], value=None),
                 [],
+                gr.update(choices=[], value=None),
                 gr.update(choices=[], value=None))
 
 # 注册函数
@@ -92,9 +110,11 @@ def logout_user():
              gr.update(visible=False), 
              gr.update(visible=False), 
              gr.update(choices=[], value=None), 
+             gr.update(choices=[], value=None),
              None, 
              gr.update(choices=[], value=None),
              [],
+             gr.update(choices=[], value=None),
              gr.update(choices=[], value=None))
 
 # 获取分类模型列表
@@ -134,19 +154,47 @@ def get_user_conversations(user_id):
     if not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/conversations/user/{user_id}")
+        res = requests.get(f"{API_URL}/conversations/user/{user_id}", timeout=10)
+        res.raise_for_status()
         data = res.json()
         conversations = data.get("conversations", [])
         return conversations
     except:
         return []
 
+
+RECENT_CONVERSATION_LIMIT = 8
+
+
+def split_conversation_choices(conversations, selected_id=None):
+    """将聊天历史拆成常用列表和“查看更多”下拉列表。"""
+    all_choices = [(conv["title"], conv["id"]) for conv in conversations]
+    recent_choices = all_choices[:RECENT_CONVERSATION_LIMIT]
+
+    # 从“查看更多”选择旧对话后，把它临时提升到可见列表，方便继续
+    # 使用左侧列表的右键重命名、删除功能。
+    if selected_id and all(value != selected_id for _, value in recent_choices):
+        selected_choice = next(
+            (choice for choice in all_choices if choice[1] == selected_id), None
+        )
+        if selected_choice:
+            recent_choices = [selected_choice] + recent_choices[
+                : RECENT_CONVERSATION_LIMIT - 1
+            ]
+
+    recent_ids = {value for _, value in recent_choices}
+    more_choices = [
+        choice for choice in all_choices if choice[1] not in recent_ids
+    ]
+    return recent_choices, more_choices
+
 # 获取用户API keys
 def get_user_api_keys(user_id):
     if not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/api-keys/user/{user_id}")
+        res = requests.get(f"{API_URL}/api-keys/user/{user_id}", timeout=10)
+        res.raise_for_status()
         data = res.json()
         api_keys = data.get("api_keys", [])
         return api_keys
@@ -209,6 +257,22 @@ def delete_conversation(conversation_id, user_id):
     except Exception as e:
         return f"❌ 删除对话失败: {str(e)}"
 
+
+def rename_conversation(conversation_id, user_id, title):
+    """更新对话标题。"""
+    if not conversation_id or not user_id or not (title or "").strip():
+        return "❌ 对话标题不能为空"
+    try:
+        res = requests.patch(
+            f"{API_URL}/conversations/{conversation_id}",
+            json={"user_id": user_id, "title": title.strip()},
+            timeout=10,
+        )
+        res.raise_for_status()
+        return "✅ 对话重命名成功"
+    except Exception as exc:
+        return f"❌ 对话重命名失败: {exc}"
+
 # 控制 RAG 上传文件显示
 def toggle_rag_upload(rag_enabled):
     return gr.update(visible=rag_enabled)
@@ -221,24 +285,41 @@ def switch_to_login():
     return gr.update(visible=True), gr.update(visible=False)
 
 
-def search_wiki(query):
-    """Search the configured Wiki source and format the result for the search page."""
+def search_content(query, source, knowledge_base_id, user_id):
+    """Search Wiki or one user-selected knowledge base."""
     query = (query or "").strip()
     if not query:
         return "请输入要搜索的内容。"
 
     try:
+        if source == "指定知识库":
+            if not user_id:
+                return "请先登录。"
+            if not knowledge_base_id:
+                return "请选择要搜索的知识库。"
+            res = requests.get(
+                f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/search",
+                params={"user_id": user_id, "query": query, "top_k": 5},
+                timeout=30,
+            )
+            res.raise_for_status()
+            data = res.json()
+            results = data.get("results", [])
+            if not results:
+                return f"未在 **{data.get('knowledge_base_name', '所选知识库')}** 中找到相关内容。"
+            items = [
+                f"### {index}\n\n{item.get('content', '')}"
+                for index, item in enumerate(results, start=1)
+            ]
+            return "## 搜索结果\n\n" + "\n\n---\n\n".join(items)
+
         res = requests.get(
             f"{API_URL}/rag/enhance-context-with-wiki",
-            params={"query": query},
-            timeout=30,
+            params={"query": query}, timeout=30,
         )
         res.raise_for_status()
-        data = res.json()
-        context = (data.get("enhanced_context") or "").strip()
-        if not context:
-            return f"未找到与 **{query}** 相关的内容。"
-        return f"## 搜索结果\n\n{context}"
+        context = (res.json().get("enhanced_context") or "").strip()
+        return context or f"未找到与 **{query}** 相关的内容。"
     except Exception as exc:
         return f"❌ 搜索失败：{exc}"
 
@@ -257,25 +338,41 @@ def search_wiki(query):
 #         return f"❌ 上传失败: {str(e)}"
 
 # 知识库管理相关函数
-def get_user_knowledge_bases(user_id):
-    """获取用户的知识库列表"""
+def fetch_user_knowledge_bases(user_id):
+    """只请求一次知识库数据，供卡片和搜索选择器共同使用。"""
     if not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/rag/knowledge-bases/{user_id}")
+        res = requests.get(f"{API_URL}/rag/knowledge-bases/{user_id}", timeout=10)
         res.raise_for_status()
-        data = res.json()
-        knowledge_bases = data.get("knowledge_bases", [])
-        
-        choices = []
-        for kb in knowledge_bases:
-            display_text = f"{kb['name']} ({kb['file_count']}个文件)"
-            choices.append((display_text, kb['id']))
-        
-        return choices
+        return res.json().get("knowledge_bases", [])
     except Exception as e:
         print(f"获取知识库列表失败: {str(e)}")
         return []
+
+
+def format_knowledge_base_choices(knowledge_bases, compact=False):
+    choices = []
+    for kb in knowledge_bases:
+        if compact:
+            display_text = kb["name"]
+        else:
+            description = (kb.get("description") or "暂无描述").strip()
+            created_at = str(kb.get("created_at", ""))[:10]
+            display_text = (
+                f"▣  {kb['name']}\n"
+                f"{kb['file_count']} 个文件 · {kb['document_count']} 个文档块\n"
+                f"{description}\n{created_at}"
+            )
+        choices.append((display_text, kb['id']))
+    return choices
+
+
+def get_user_knowledge_bases(user_id, compact=False):
+    """获取并格式化用户知识库列表。"""
+    return format_knowledge_base_choices(
+        fetch_user_knowledge_bases(user_id), compact=compact
+    )
 
 def create_knowledge_base(user_id, name, description=""):
     """创建知识库"""
@@ -730,20 +827,44 @@ with gr.Blocks(
         background: #f5f7fb !important;
         color: #18202b !important;
     }
+    html, body, #root {
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+    }
     .gradio-container {
-        max-width: 1480px !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        min-width: 1180px !important;
+        max-width: none !important;
         padding: 24px 28px 40px !important;
+        overflow: auto !important;
     }
     .app-brand h2 {
-        margin: 0 0 18px !important;
+        margin: 0 0 24px !important;
         color: #121820 !important;
-        font-size: 26px !important;
+        font-size: 36px !important;
         letter-spacing: -0.02em !important;
+        text-align: center !important;
+    }
+    .login-page {
+        min-height: calc(100vh - 64px) !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    .login-card {
+        width: 420px !important;
+        max-width: calc(100vw - 40px) !important;
+        padding: 28px !important;
+        border: 1px solid #e1e6ed !important;
+        border-radius: 20px !important;
+        background: #fff !important;
+        box-shadow: 0 18px 50px rgba(16, 24, 40, .10) !important;
     }
     .top-nav {
         align-items: center !important;
         gap: 8px !important;
-        width: min(760px, 100%) !important;
+        width: min(900px, 100%) !important;
         margin: 0 auto 26px !important;
         padding: 7px !important;
         border: 1px solid #30343b !important;
@@ -822,6 +943,90 @@ with gr.Blocks(
         padding: 22px !important;
         background: #ffffff !important;
     }
+    .conversation-history {
+        max-height: 510px !important;
+        overflow-y: auto !important;
+    }
+    .conversation-history .wrap {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+    }
+    .conversation-history label {
+        width: 100% !important;
+        padding: 11px 12px !important;
+        border: 0 !important;
+        border-radius: 9px !important;
+        background: transparent !important;
+        cursor: pointer !important;
+        color: #514a46 !important;
+        font-size: 15px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    .conversation-history label:hover,
+    .conversation-history label:has(input:checked) {
+        background: #eef1f5 !important;
+        color: #15191f !important;
+    }
+    .conversation-history input[type="radio"] {
+        display: none !important;
+    }
+    .context-bridge {
+        display: none !important;
+    }
+    #conversation-context-menu {
+        position: fixed;
+        z-index: 2000;
+        min-width: 138px;
+        padding: 6px;
+        border: 1px solid #dfe3e8;
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, .18);
+    }
+    #conversation-context-menu button {
+        width: 100%;
+        padding: 9px 12px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+    }
+    #conversation-context-menu button:hover { background: #f1f3f5; }
+    #conversation-context-menu button.danger { color: #d92d20; }
+    .chat-action-btn {
+        width: 74px !important;
+        min-width: 74px !important;
+        max-width: 74px !important;
+        height: 48px !important;
+        padding: 0 10px !important;
+        align-self: center !important;
+    }
+    .voice-trigger {
+        width: 48px !important;
+        min-width: 48px !important;
+        max-width: 48px !important;
+        font-size: 20px !important;
+    }
+    .voice-panel {
+        margin-top: 8px !important;
+        padding: 14px !important;
+        border: 1px solid #dfe4eb !important;
+        border-radius: 14px !important;
+        background: #f8fafc !important;
+    }
+    .voice-recorder {
+        width: 100% !important;
+        min-height: 120px !important;
+        overflow: visible !important;
+    }
+    .settings-panel {
+        max-width: 980px !important;
+        margin: 0 auto !important;
+    }
     .page-title h2 {
         margin-top: 0 !important;
         font-size: 28px !important;
@@ -839,6 +1044,71 @@ with gr.Blocks(
         border-radius: 18px !important;
         background: #fff !important;
     }
+    .search-source .wrap {
+        gap: 10px !important;
+    }
+    .kb-toolbar {
+        align-items: center !important;
+        justify-content: space-between !important;
+        margin-bottom: 16px !important;
+    }
+    .kb-create-trigger {
+        max-width: 180px !important;
+    }
+    .kb-grid .wrap {
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(260px, 1fr)) !important;
+        gap: 16px !important;
+        padding: 4px !important;
+    }
+    .kb-grid label {
+        min-height: 150px !important;
+        align-items: flex-start !important;
+        padding: 18px !important;
+        border: 1px solid #dfe4eb !important;
+        border-radius: 14px !important;
+        background: #fff !important;
+        box-shadow: 0 5px 16px rgba(16, 24, 40, .05) !important;
+        cursor: pointer !important;
+        transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease !important;
+    }
+    .kb-grid label:hover {
+        transform: translateY(-2px) !important;
+        border-color: #22b8a9 !important;
+        box-shadow: 0 10px 24px rgba(16, 24, 40, .10) !important;
+    }
+    .kb-grid label:has(input:checked) {
+        border-color: #12b8a6 !important;
+        box-shadow: 0 0 0 2px rgba(18, 184, 166, .18) !important;
+    }
+    .kb-grid label > span:last-child {
+        white-space: pre-line !important;
+        line-height: 1.7 !important;
+        font-size: 14px !important;
+    }
+    .kb-grid input[type="radio"] {
+        margin-top: 5px !important;
+    }
+    .kb-detail {
+        margin-top: 22px !important;
+        padding: 22px !important;
+        border: 1px solid #dfe4eb !important;
+        border-radius: 16px !important;
+        background: #f9fafb !important;
+    }
+    .kb-modal {
+        position: fixed !important;
+        inset: 50% auto auto 50% !important;
+        z-index: 1000 !important;
+        width: 520px !important;
+        max-width: calc(100vw - 40px) !important;
+        padding: 24px !important;
+        transform: translate(-50%, -50%) !important;
+        border: 1px solid #d8dee8 !important;
+        border-radius: 18px !important;
+        background: #fff !important;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, .28) !important;
+    }
     .logout-row {
         margin-top: 18px !important;
         justify-content: flex-end !important;
@@ -846,36 +1116,31 @@ with gr.Blocks(
     .logout-btn {
         max-width: 140px !important;
     }
-    @media (max-width: 760px) {
-        .gradio-container { padding: 14px !important; }
+    @media (max-width: 1180px) {
+        .gradio-container { padding: 18px !important; }
         .top-nav { border-radius: 22px !important; }
         .nav-btn { height: 44px !important; padding: 0 10px !important; font-size: 14px !important; }
         .welcome-page { min-height: 430px !important; }
+        .kb-grid .wrap { grid-template-columns: repeat(2, minmax(260px, 1fr)) !important; }
     }
     """
 ) as demo:
-    gr.Markdown("## ◈ OmniSage", elem_classes="app-brand")
-    # gr.Markdown("## 🧠 全知智者")
-
     user_id = gr.State()
     conversation_id = gr.State()
     
-    # 折叠状态跟踪
-    api_key_visible = gr.State(False)
-    audio_visible = gr.State(False)
-
     # === 登录区 ===
-    with gr.Column(visible=True) as login_area:
+    with gr.Column(visible=True, elem_classes="login-page") as login_area:
+        gr.Markdown("## ◈ OmniSage", elem_classes="app-brand")
         login_status = gr.Markdown("请登录")
         # 登录表单
-        with gr.Column(visible=True) as login_form:
+        with gr.Column(visible=True, elem_classes="login-card") as login_form:
             username = gr.Textbox(label="用户名")
             password = gr.Textbox(label="密码", type="password")
             login_btn = gr.Button("登录", variant="primary")
             switch_to_register_btn = gr.Button("没有账户？点击注册", variant="secondary")
         
         # 注册表单
-        with gr.Column(visible=False) as register_form:
+        with gr.Column(visible=False, elem_classes="login-card") as register_form:
             reg_username = gr.Textbox(label="用户名")
             reg_password = gr.Textbox(label="密码", type="password")
             reg_confirm_password = gr.Textbox(label="确认密码", type="password")
@@ -890,6 +1155,7 @@ with gr.Blocks(
             knowledge_nav_btn = gr.Button("知识库", variant="secondary", elem_classes="nav-btn")
             chat_nav_btn = gr.Button("聊天", variant="secondary", elem_classes="nav-btn")
             search_nav_btn = gr.Button("搜索", variant="secondary", elem_classes="nav-btn")
+            settings_nav_btn = gr.Button("设置", variant="secondary", elem_classes="nav-btn")
 
         with gr.Column(visible=True, elem_classes="welcome-page") as home_page:
             gr.Markdown("# Welcome to OmniSage", elem_classes="welcome-copy")
@@ -897,7 +1163,14 @@ with gr.Blocks(
 
         with gr.Column(visible=False, elem_classes="search-wrap") as search_page:
             gr.Markdown("## 搜索", elem_classes="page-title")
-            gr.Markdown("检索 Wiki 知识源中的相关内容。")
+            gr.Markdown("选择 Wiki 或指定知识库作为搜索范围。")
+            search_source = gr.Radio(
+                choices=["Wiki", "指定知识库"], value="Wiki",
+                label="搜索范围", elem_classes="search-source"
+            )
+            search_kb_list = gr.Dropdown(
+                choices=[], label="选择知识库", visible=False, interactive=True
+            )
             with gr.Row():
                 search_input = gr.Textbox(
                     placeholder="输入关键词或问题...", show_label=False, scale=8
@@ -909,7 +1182,7 @@ with gr.Blocks(
 
         with gr.Row():
             # 左侧：管理面板
-            with gr.Column(visible=False, scale=2, elem_classes="sidebar") as sidebar:
+            with gr.Column(visible=False, scale=1, elem_classes="sidebar") as sidebar:
                 # 标签页按钮
                 with gr.Row(elem_classes="legacy-tabs"):
                     tab_conversation_btn = gr.Button("💬 对话管理", variant="primary", size="sm", elem_classes="tab-btn")
@@ -918,90 +1191,86 @@ with gr.Blocks(
                 
                 # 对话管理标签页
                 with gr.Column(visible=True, elem_classes="tab-content") as conversation_tab:
-                    gr.Markdown("### 💬 对话管理")
-                    
-                    # 新建对话
-                    with gr.Row():
-                        new_conversation_title = gr.Textbox(
-                            placeholder="输入对话标题...",
-                            label="新对话标题",
-                            scale=3
-                        )
-                        new_conversation_btn = gr.Button("新建", variant="primary", scale=1)
-                    
+                    gr.Markdown("### 聊天")
+                    new_conversation_btn = gr.Button("＋ 新建对话", variant="primary")
                     new_conversation_status = gr.Markdown()
                     
                     # 对话列表
                     gr.Markdown("**我的对话**")
-                    conversation_list = gr.Dropdown(
+                    conversation_list = gr.Radio(
                         choices=[],
-                        label="选择对话",
-                        interactive=True
+                        label="聊天历史",
+                        show_label=False,
+                        interactive=True,
+                        elem_classes="conversation-history",
                     )
                     
-                    with gr.Row():
-                        delete_conversation_btn = gr.Button("删除对话", variant="stop", size="sm")
-                        refresh_conversations_btn = gr.Button("刷新", variant="secondary", size="sm")
+                    more_conversation_list = gr.Dropdown(
+                        choices=[], label="查看更多对话", interactive=True
+                    )
                     
                     delete_status = gr.Markdown()
+
+                    # 由右键菜单调用的桥接组件，不占用可见布局。
+                    context_conversation_title = gr.Textbox(
+                        elem_id="context-conversation-title", elem_classes="context-bridge"
+                    )
+                    context_rename_btn = gr.Button(
+                        "rename", elem_id="context-rename", elem_classes="context-bridge"
+                    )
+                    context_delete_btn = gr.Button(
+                        "delete", elem_id="context-delete", elem_classes="context-bridge"
+                    )
             
                 # 知识库管理标签页
                 with gr.Column(visible=False, elem_classes="tab-content") as knowledge_tab:
-                    gr.Markdown("### 📚 知识库管理")
-                    
-                    # 新建知识库
-                    with gr.Row():
-                        new_kb_name = gr.Textbox(
-                            placeholder="输入知识库名称...",
-                            label="新知识库名称",
-                            scale=3
+                    with gr.Row(elem_classes="kb-toolbar"):
+                        gr.Markdown("### ▣ 知识库")
+                        with gr.Row():
+                            refresh_kb_btn = gr.Button("刷新", variant="secondary", size="sm")
+                            open_new_kb_btn = gr.Button(
+                                "＋ 新建知识库", variant="primary",
+                                elem_classes="kb-create-trigger"
+                            )
+
+                    knowledge_base_list = gr.Radio(
+                        choices=[], label="我的知识库", show_label=False,
+                        interactive=True, elem_classes="kb-grid"
+                    )
+
+                    # 只有点击知识库卡片后才显示文件与删除管理。
+                    with gr.Column(visible=False, elem_classes="kb-detail") as kb_detail_panel:
+                        selected_kb_title = gr.Markdown("### 知识库详情")
+                        kb_stats = gr.Markdown()
+                        with gr.Row():
+                            kb_file_input = gr.File(label="选择文件上传到知识库", scale=4)
+                            kb_upload_btn = gr.Button("上传文件", variant="primary", scale=1)
+                        kb_upload_status = gr.Markdown()
+                        kb_file_list = gr.Dropdown(
+                            choices=[], label="知识库文件", interactive=True
                         )
-                        new_kb_btn = gr.Button("新建", variant="primary", scale=1)
-                    
-                    new_kb_description = gr.Textbox(
-                        placeholder="知识库描述（可选）...",
-                        label="知识库描述",
-                        lines=2
-                    )
-                    
-                    new_kb_status = gr.Markdown()
-                    
-                    # 知识库列表
-                    gr.Markdown("**我的知识库**")
-                    knowledge_base_list = gr.Dropdown(
-                        choices=[],
-                        label="选择知识库",
-                        interactive=True
-                    )
-                    
-                    with gr.Row():
-                        delete_kb_btn = gr.Button("删除知识库", variant="stop", size="sm")
-                        refresh_kb_btn = gr.Button("刷新", variant="secondary", size="sm")
-                    
-                    delete_kb_status = gr.Markdown()
-                    
-                    # 知识库统计
-                    kb_stats = gr.Markdown()
-                    
-                    # 文件上传到知识库
-                    gr.Markdown("**📁 文件上传**")
-                    kb_file_input = gr.File(label="选择文件上传到知识库")
-                    kb_upload_btn = gr.Button("上传到知识库", variant="primary", size="sm")
-                    kb_upload_status = gr.Markdown()
-                    
-                    # 知识库文件列表
-                    gr.Markdown("**📄 知识库文件**")
-                    kb_file_list = gr.Dropdown(
-                        choices=[],
-                        label="选择文件",
-                        interactive=True
-                    )
-                    
-                    delete_kb_file_btn = gr.Button("删除文件", variant="stop", size="sm")
-                    delete_kb_file_status = gr.Markdown()
+                        with gr.Row():
+                            delete_kb_file_btn = gr.Button("删除所选文件", variant="stop", size="sm")
+                            delete_kb_btn = gr.Button("删除知识库", variant="stop", size="sm")
+                        delete_kb_file_status = gr.Markdown()
+                        delete_kb_status = gr.Markdown()
+
+                    # Gradio 5.41 没有原生 Modal，使用固定定位面板实现弹窗。
+                    with gr.Column(visible=False, elem_classes="kb-modal") as new_kb_modal:
+                        gr.Markdown("### 新建知识库")
+                        new_kb_name = gr.Textbox(
+                            placeholder="输入知识库名称...", label="知识库名称"
+                        )
+                        new_kb_description = gr.Textbox(
+                            placeholder="知识库描述（可选）...", label="知识库描述", lines=3
+                        )
+                        with gr.Row():
+                            cancel_new_kb_btn = gr.Button("取消", variant="secondary")
+                            new_kb_btn = gr.Button("创建", variant="primary")
+                        new_kb_status = gr.Markdown()
             
                 # 设置标签页
-                with gr.Column(visible=False, elem_classes="tab-content") as settings_tab:
+                with gr.Column(visible=False, elem_classes=["tab-content", "settings-panel"]) as settings_tab:
                     gr.Markdown("### ⚙️ 设置")
                     
                     # Wiki知识说明
@@ -1047,7 +1316,7 @@ with gr.Blocks(
                 # 高级功能折叠区域
                 advanced_title = gr.Markdown("**🔧 高级功能**")
                 
-                # API Key管理折叠
+                # API Key管理
                 with gr.Column(visible=False, elem_classes="collapsible-section") as api_key_section:
                     gr.Markdown("**🔑 API Key管理**")
                     
@@ -1085,16 +1354,6 @@ with gr.Blocks(
                     delete_api_key_btn = gr.Button("删除选中", variant="stop", size="sm")
                     delete_api_key_status = gr.Markdown()
                 
-                # 音频输入折叠
-                with gr.Column(visible=False, elem_classes="collapsible-section") as audio_section:
-                    gr.Markdown("**🎤 语音输入**")
-                    mic = gr.Audio(type="filepath", label="录音", show_label=True)
-                
-                # 控制按钮
-                with gr.Row():
-                    toggle_api_key_btn = gr.Button("🔑 API Key", variant="secondary", size="sm", scale=1, elem_classes="toggle-btn")
-                    toggle_audio_btn = gr.Button("🎤 语音", variant="secondary", size="sm", scale=1, elem_classes="toggle-btn")
-                
             # 右侧：聊天界面
             with gr.Column(visible=False, scale=4, elem_classes="main-chat-area") as main_chat:
                 # 聊天历史显示区域
@@ -1108,7 +1367,7 @@ with gr.Blocks(
                 )
                 
                 # 输入区域
-                with gr.Row():
+                with gr.Row(equal_height=True):
                     with gr.Column(scale=8):
                         message_input = gr.Textbox(
                             placeholder="请输入内容...",
@@ -1116,8 +1375,21 @@ with gr.Blocks(
                             lines=2,
                             max_lines=4
                         )
-                    with gr.Column(scale=1):
-                        send_btn = gr.Button("发送", variant="primary", size="lg")
+                    voice_btn = gr.Button(
+                        "🎤", variant="secondary", scale=0,
+                        elem_classes=["chat-action-btn", "voice-trigger"],
+                    )
+                    send_btn = gr.Button(
+                        "发送", variant="primary", scale=0,
+                        elem_classes="chat-action-btn",
+                    )
+                with gr.Column(visible=False, elem_classes="voice-panel") as voice_panel:
+                    mic = gr.Audio(
+                        sources=["microphone"], type="filepath",
+                        label="语音输入", show_label=True, container=True,
+                        elem_classes="voice-recorder",
+                    )
+                    close_voice_btn = gr.Button("关闭语音输入", variant="secondary", size="sm")
 
     logout_btn = gr.Button(
         "退出登录", visible=False, variant="secondary", elem_classes="logout-btn"
@@ -1127,7 +1399,7 @@ with gr.Blocks(
     login_btn.click(
         login_user,
         inputs=[username, password],
-        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list]
+        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, more_conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list, search_kb_list]
     )
 
     # 注册相关事件
@@ -1150,32 +1422,32 @@ with gr.Blocks(
 
     logout_btn.click(
         logout_user,
-        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list]
+        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, more_conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list, search_kb_list]
     )
 
     # 新建对话
-    def create_conversation_and_update(user_id, title):
-        """创建新对话并更新列表"""
-        if not title.strip():
-            return gr.update(choices=[], value=None), "❌ 请输入对话标题", gr.update(value=""), None
-        
-        conversation_data, status_msg = create_new_conversation(user_id, title.strip())
+    def create_conversation_and_update(user_id):
+        """直接创建空白对话，标题由首条消息自动生成。"""
+        conversation_data, status_msg = create_new_conversation(user_id, "新对话")
         
         if conversation_data:
-            # 更新对话列表
             conversations = get_user_conversations(user_id)
-            choices = []
-            for conv in conversations:
-                title_text = f"{conv['title']} ({conv['message_count']}条消息)"
-                choices.append((title_text, conv['id']))
-            return gr.update(choices=choices, value=conversation_data['id']), status_msg, gr.update(value=""), conversation_data['id']
-        else:
-            return gr.update(choices=[], value=None), status_msg, gr.update(value=""), None
+            recent_choices, more_choices = split_conversation_choices(
+                conversations, conversation_data["id"]
+            )
+            return (
+                gr.update(choices=recent_choices, value=conversation_data['id']),
+                gr.update(choices=more_choices, value=None),
+                status_msg,
+                conversation_data['id'],
+                [],
+            )
+        return gr.update(), gr.update(), status_msg, None, []
     
     new_conversation_btn.click(
         create_conversation_and_update,
-        inputs=[user_id, new_conversation_title],
-        outputs=[conversation_list, new_conversation_status, new_conversation_title, conversation_id]
+        inputs=[user_id],
+        outputs=[conversation_list, more_conversation_list, new_conversation_status, conversation_id, chatbot]
     )
     
     # 删除对话
@@ -1184,45 +1456,45 @@ with gr.Blocks(
         status_msg = delete_conversation(conversation_id, user_id)
         
         if "成功" in status_msg:
-            # 更新对话列表
             conversations = get_user_conversations(user_id)
-            choices = []
-            default_conversation_id = None
-            
-            for conv in conversations:
-                title = f"{conv['title']} ({conv['message_count']}条消息)"
-                choices.append((title, conv['id']))
-            if choices:
-                default_conversation_id = choices[0][1]
-            
-            return gr.update(choices=choices, value=default_conversation_id), status_msg, default_conversation_id
-        else:
-            return gr.update(choices=[], value=None), status_msg, None
+            default_conversation_id = (
+                conversations[0]["id"] if conversations else None
+            )
+            recent_choices, more_choices = split_conversation_choices(
+                conversations, default_conversation_id
+            )
+            history = load_conversation_history(default_conversation_id, user_id)
+            return (
+                gr.update(choices=recent_choices, value=default_conversation_id),
+                gr.update(choices=more_choices, value=None),
+                status_msg, default_conversation_id, history,
+            )
+        return gr.update(), gr.update(), status_msg, conversation_id, gr.update()
     
-    delete_conversation_btn.click(
+    context_delete_btn.click(
         delete_conversation_and_update,
-        inputs=[conversation_id, user_id],
-        outputs=[conversation_list, delete_status, conversation_id]
+        inputs=[conversation_list, user_id],
+        outputs=[conversation_list, more_conversation_list, delete_status, conversation_id, chatbot]
     )
-    
-    # 刷新对话列表
-    def refresh_conversations(user_id):
-        """刷新对话列表"""
+
+    def rename_conversation_and_update(conversation_id, user_id, title):
+        status_msg = rename_conversation(conversation_id, user_id, title)
+        if "成功" not in status_msg:
+            return gr.update(), gr.update(), status_msg
         conversations = get_user_conversations(user_id)
-        choices = []
-        default_conversation_id = None
-        for conv in conversations:
-            title = f"{conv['title']} ({conv['message_count']}条消息)"
-            choices.append((title, conv['id']))
-        if choices:
-            default_conversation_id = choices[0][1]
-        
-        return gr.update(choices=choices, value=default_conversation_id)
-    
-    refresh_conversations_btn.click(
-        refresh_conversations,
-        inputs=[user_id],
-        outputs=[conversation_list]
+        recent_choices, more_choices = split_conversation_choices(
+            conversations, conversation_id
+        )
+        return (
+            gr.update(choices=recent_choices, value=conversation_id),
+            gr.update(choices=more_choices, value=None),
+            status_msg,
+        )
+
+    context_rename_btn.click(
+        rename_conversation_and_update,
+        inputs=[conversation_list, user_id, context_conversation_title],
+        outputs=[conversation_list, more_conversation_list, delete_status],
     )
     
     # 切换对话
@@ -1233,10 +1505,32 @@ with gr.Blocks(
             return conversation_id, chat_history
         return conversation_id, []  # 返回空的消息列表
     
-    conversation_list.change(
+    conversation_list.input(
         on_conversation_change,
         inputs=[conversation_list, user_id],
         outputs=[conversation_id, chatbot]
+    )
+
+    def on_more_conversation_change(selected_id, user_id):
+        """从下拉框选择旧对话，并将它提升到可见历史列表。"""
+        if selected_id is None:
+            return gr.update(), None, [], gr.update()
+        conversations = get_user_conversations(user_id)
+        recent_choices, more_choices = split_conversation_choices(
+            conversations, selected_id
+        )
+        chat_history = load_conversation_history(selected_id, user_id)
+        return (
+            gr.update(choices=recent_choices, value=selected_id),
+            selected_id,
+            chat_history,
+            gr.update(choices=more_choices, value=None),
+        )
+
+    more_conversation_list.input(
+        on_more_conversation_change,
+        inputs=[more_conversation_list, user_id],
+        outputs=[conversation_list, conversation_id, chatbot, more_conversation_list],
     )
 
     # RAG文件上传（已移至知识库管理）
@@ -1249,50 +1543,50 @@ with gr.Blocks(
     def send_and_clear(message, user_id, conversation_id, mode, model, use_rag, use_wiki, history):
         """发送消息并清空输入框"""
         if not message.strip():
-            return history, ""
+            yield history, "", gr.update(), gr.update()
+            return
         stream = True
-        # 使用流式处理
+        latest_history = history
         for updated_history in send_message(message, user_id, conversation_id, mode, model, use_rag, use_wiki, history, stream):
-            yield updated_history, ""
+            latest_history = updated_history
+            yield updated_history, "", gr.update(), gr.update()
+
+        conversations = get_user_conversations(user_id)
+        recent_choices, more_choices = split_conversation_choices(
+            conversations, conversation_id
+        )
+        yield (
+            latest_history,
+            "",
+            gr.update(choices=recent_choices, value=conversation_id),
+            gr.update(choices=more_choices, value=None),
+        )
     
     # 回车发送
     message_input.submit(
         send_and_clear,
         inputs=[message_input, user_id, conversation_id, mode, model, use_rag, use_wiki, chatbot],
-        outputs=[chatbot, message_input]
+        outputs=[chatbot, message_input, conversation_list, more_conversation_list]
     )
     
     # 按钮发送
     send_btn.click(
         send_and_clear,
         inputs=[message_input, user_id, conversation_id, mode, model, use_rag, use_wiki, chatbot],
-        outputs=[chatbot, message_input]
+        outputs=[chatbot, message_input, conversation_list, more_conversation_list]
     )
 
-    mic.change(transcribe, inputs=mic, outputs=message_input)
+    voice_btn.click(lambda: gr.update(visible=True), outputs=[voice_panel])
+    close_voice_btn.click(lambda: gr.update(visible=False), outputs=[voice_panel])
 
-    # 折叠控制函数
-    def toggle_api_key_section(current_visible):
-        """切换API Key管理区域的显示状态"""
-        new_visible = not current_visible
-        return new_visible, gr.update(visible=new_visible)
-    
-    def toggle_audio_section(current_visible):
-        """切换音频输入区域的显示状态"""
-        new_visible = not current_visible
-        return new_visible, gr.update(visible=new_visible)
-    
-    # 折叠控制事件
-    toggle_api_key_btn.click(
-        toggle_api_key_section,
-        inputs=[api_key_visible],
-        outputs=[api_key_visible, api_key_section]
-    )
-    
-    toggle_audio_btn.click(
-        toggle_audio_section,
-        inputs=[audio_visible],
-        outputs=[audio_visible, audio_section]
+    def transcribe_and_close(audio_path):
+        return transcribe(audio_path), gr.update(visible=False)
+
+    # 录音停止后再执行识别，避免点击开始录制时就触发空文件处理。
+    mic.stop_recording(
+        transcribe_and_close,
+        inputs=[mic],
+        outputs=[message_input, voice_panel],
     )
 
     # API Key管理事件
@@ -1370,24 +1664,36 @@ with gr.Blocks(
     )
 
     # 知识库管理事件
+    open_new_kb_btn.click(
+        lambda: gr.update(visible=True), outputs=[new_kb_modal]
+    )
+    cancel_new_kb_btn.click(
+        lambda: (gr.update(visible=False), "", "", ""),
+        outputs=[new_kb_modal, new_kb_name, new_kb_description, new_kb_status],
+    )
+
     def create_knowledge_base_and_update(user_id, name, description):
         """创建知识库并更新列表"""
-        if not name.strip():
-            return gr.update(choices=[], value=None), "❌ 请输入知识库名称", gr.update(value=""), gr.update(value="")
+        name = (name or "").strip()
+        if not name:
+            return gr.update(), gr.update(), "❌ 请输入知识库名称", gr.update(), gr.update(), gr.update(visible=True)
         
-        status_msg = create_knowledge_base(user_id, name.strip(), description.strip() if description else "")
+        status_msg = create_knowledge_base(user_id, name, description.strip() if description else "")
         
         if "成功" in status_msg:
-            # 更新知识库列表
             knowledge_bases = get_user_knowledge_bases(user_id)
-            return gr.update(choices=knowledge_bases, value=None), status_msg, gr.update(value=""), gr.update(value="")
-        else:
-            return gr.update(choices=[], value=None), status_msg, gr.update(value=""), gr.update(value="")
+            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            return (
+                gr.update(choices=knowledge_bases, value=None),
+                gr.update(choices=search_choices, value=None),
+                status_msg, "", "", gr.update(visible=False),
+            )
+        return gr.update(), gr.update(), status_msg, gr.update(), gr.update(), gr.update(visible=True)
     
     new_kb_btn.click(
         create_knowledge_base_and_update,
         inputs=[user_id, new_kb_name, new_kb_description],
-        outputs=[knowledge_base_list, new_kb_status, new_kb_name, new_kb_description]
+        outputs=[knowledge_base_list, search_kb_list, new_kb_status, new_kb_name, new_kb_description, new_kb_modal]
     )
     
     # 删除知识库
@@ -1396,35 +1702,44 @@ with gr.Blocks(
         status_msg = delete_knowledge_base(knowledge_base_id, user_id)
         
         if "成功" in status_msg:
-            # 更新知识库列表
             knowledge_bases = get_user_knowledge_bases(user_id)
-            return gr.update(choices=knowledge_bases, value=None), status_msg
-        else:
-            return gr.update(choices=[], value=None), status_msg
+            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            return (
+                gr.update(choices=knowledge_bases, value=None),
+                gr.update(choices=search_choices, value=None),
+                status_msg,
+                gr.update(visible=False),
+            )
+        return gr.update(), gr.update(), status_msg, gr.update()
     
     delete_kb_btn.click(
         delete_knowledge_base_and_update,
         inputs=[knowledge_base_list, user_id],
-        outputs=[knowledge_base_list, delete_kb_status]
+        outputs=[knowledge_base_list, search_kb_list, delete_kb_status, kb_detail_panel]
     )
     
     # 刷新知识库列表
     def refresh_knowledge_bases(user_id):
         """刷新知识库列表"""
         knowledge_bases = get_user_knowledge_bases(user_id)
-        return gr.update(choices=knowledge_bases, value=None)
+        search_choices = get_user_knowledge_bases(user_id, compact=True)
+        return (
+            gr.update(choices=knowledge_bases, value=None),
+            gr.update(choices=search_choices, value=None),
+            gr.update(visible=False),
+        )
     
     refresh_kb_btn.click(
         refresh_knowledge_bases,
         inputs=[user_id],
-        outputs=[knowledge_base_list]
+        outputs=[knowledge_base_list, search_kb_list, kb_detail_panel]
     )
     
     # 知识库选择变化时更新文件列表和统计信息
     def on_knowledge_base_change(knowledge_base_id, user_id):
         """知识库选择变化时的处理"""
         if not knowledge_base_id or not user_id:
-            return gr.update(choices=[], value=None), "请先选择知识库"
+            return gr.update(choices=[], value=None), "", gr.update(visible=False), "### 知识库详情"
         
         # 更新文件列表
         files = get_knowledge_base_files(knowledge_base_id, user_id)
@@ -1432,65 +1747,79 @@ with gr.Blocks(
         # 更新统计信息
         stats = get_knowledge_base_stats(user_id)
         
-        return gr.update(choices=files, value=None), stats
+        compact_choices = get_user_knowledge_bases(user_id, compact=True)
+        selected_name = next(
+            (label for label, value in compact_choices if value == knowledge_base_id),
+            "知识库详情",
+        )
+        return gr.update(choices=files, value=None), stats, gr.update(visible=True), f"### {selected_name}"
     
     knowledge_base_list.change(
         on_knowledge_base_change,
         inputs=[knowledge_base_list, user_id],
-        outputs=[kb_file_list, kb_stats]
+        outputs=[kb_file_list, kb_stats, kb_detail_panel, selected_kb_title]
     )
     
     # 上传文件到知识库
     def upload_file_to_kb_and_update(file, knowledge_base_id, user_id):
         """上传文件到知识库并更新文件列表"""
         if not file or not knowledge_base_id or not user_id:
-            return "❗ 请先选择知识库和文件"
+            return "❗ 请先选择知识库和文件", gr.update(), gr.update(), gr.update()
         
         status_msg = upload_file_to_knowledge_base(file, knowledge_base_id, user_id)
         
         if "成功" in status_msg:
-            # 更新文件列表
             files = get_knowledge_base_files(knowledge_base_id, user_id)
-            return status_msg, gr.update(choices=files, value=None)
-        else:
-            return status_msg, gr.update(choices=[], value=None)
+            cards = get_user_knowledge_bases(user_id)
+            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            return (
+                status_msg,
+                gr.update(choices=files, value=None),
+                gr.update(choices=cards, value=knowledge_base_id),
+                gr.update(choices=search_choices),
+            )
+        return status_msg, gr.update(), gr.update(), gr.update()
     
     kb_upload_btn.click(
         upload_file_to_kb_and_update,
         inputs=[kb_file_input, knowledge_base_list, user_id],
-        outputs=[kb_upload_status, kb_file_list]
+        outputs=[kb_upload_status, kb_file_list, knowledge_base_list, search_kb_list]
     )
     
     # 删除知识库文件
     def delete_kb_file_and_update(file_id, knowledge_base_id, user_id):
         """删除知识库文件并更新列表"""
         if not file_id or not knowledge_base_id or not user_id:
-            return gr.update(choices=[], value=None), "❗ 请先选择要删除的文件"
+            return gr.update(), "❗ 请先选择要删除的文件", gr.update(), gr.update(), gr.update()
         
         status_msg = delete_file_from_knowledge_base(file_id, knowledge_base_id, user_id)
         
         if "成功" in status_msg:
             # 更新文件列表
             files = get_knowledge_base_files(knowledge_base_id, user_id)
-            # 更新知识库统计信息
             stats = get_knowledge_base_stats(user_id)
-            return gr.update(choices=files, value=None), status_msg, stats
-        else:
-            return gr.update(choices=[], value=None), status_msg, "删除失败"
+            cards = get_user_knowledge_bases(user_id)
+            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            return (
+                gr.update(choices=files, value=None), status_msg, stats,
+                gr.update(choices=cards, value=knowledge_base_id),
+                gr.update(choices=search_choices),
+            )
+        return gr.update(), status_msg, "删除失败", gr.update(), gr.update()
     
     delete_kb_file_btn.click(
         delete_kb_file_and_update,
         inputs=[kb_file_list, knowledge_base_list, user_id],
-        outputs=[kb_file_list, delete_kb_file_status, kb_stats]
+        outputs=[kb_file_list, delete_kb_file_status, kb_stats, knowledge_base_list, search_kb_list]
     )
 
-    # 顶部主导航：主页、知识库、聊天和搜索。
+    # 顶部主导航：主页、知识库、聊天、搜索和设置。
     page_outputs = [
-        home_page, sidebar, main_chat, search_page,
+        home_page, sidebar, main_chat, search_page, new_kb_modal,
         conversation_tab, knowledge_tab, settings_tab,
         mode, use_rag, model, advanced_title,
-        api_key_section, audio_section, toggle_api_key_btn, toggle_audio_btn,
-        home_nav_btn, knowledge_nav_btn, chat_nav_btn, search_nav_btn,
+        api_key_section,
+        home_nav_btn, knowledge_nav_btn, chat_nav_btn, search_nav_btn, settings_nav_btn,
     ]
 
     def switch_main_page(page):
@@ -1498,38 +1827,56 @@ with gr.Blocks(
         is_knowledge = page == "knowledge"
         is_chat = page == "chat"
         is_search = page == "search"
+        is_settings = page == "settings"
         return (
             gr.update(visible=is_home),
-            gr.update(visible=is_knowledge or is_chat),
+            gr.update(visible=is_knowledge or is_chat or is_settings),
             gr.update(visible=is_chat),
             gr.update(visible=is_search),
+            gr.update(visible=False),
             gr.update(visible=is_chat),
             gr.update(visible=is_knowledge),
-            gr.update(visible=False),
-            gr.update(visible=is_chat),
-            gr.update(visible=is_chat),
-            gr.update(visible=is_chat),
-            gr.update(visible=is_chat),
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(visible=is_chat),
-            gr.update(visible=is_chat),
+            gr.update(visible=is_settings),
+            gr.update(visible=is_settings),
+            gr.update(visible=is_settings),
+            gr.update(visible=is_settings),
+            gr.update(visible=is_settings),
+            gr.update(visible=is_settings),
             gr.update(variant="primary" if is_home else "secondary"),
             gr.update(variant="primary" if is_knowledge else "secondary"),
             gr.update(variant="primary" if is_chat else "secondary"),
             gr.update(variant="primary" if is_search else "secondary"),
+            gr.update(variant="primary" if is_settings else "secondary"),
         )
 
     home_nav_btn.click(lambda: switch_main_page("home"), outputs=page_outputs)
     knowledge_nav_btn.click(lambda: switch_main_page("knowledge"), outputs=page_outputs)
     chat_nav_btn.click(lambda: switch_main_page("chat"), outputs=page_outputs)
+    chat_nav_btn.click(
+        on_conversation_change,
+        inputs=[conversation_list, user_id],
+        outputs=[conversation_id, chatbot],
+    )
     search_nav_btn.click(lambda: switch_main_page("search"), outputs=page_outputs)
+    settings_nav_btn.click(lambda: switch_main_page("settings"), outputs=page_outputs)
 
     # 每次登录后都从主页开始，避免保留上一次退出时的页面状态。
     login_btn.click(lambda: switch_main_page("home"), outputs=page_outputs)
 
-    search_btn.click(search_wiki, inputs=[search_input], outputs=[search_result])
-    search_input.submit(search_wiki, inputs=[search_input], outputs=[search_result])
+    search_source.change(
+        lambda source: gr.update(visible=source == "指定知识库"),
+        inputs=[search_source], outputs=[search_kb_list],
+    )
+    search_btn.click(
+        search_content,
+        inputs=[search_input, search_source, search_kb_list, user_id],
+        outputs=[search_result],
+    )
+    search_input.submit(
+        search_content,
+        inputs=[search_input, search_source, search_kb_list, user_id],
+        outputs=[search_result],
+    )
     
     # Wiki状态刷新
     refresh_wiki_status_btn.click(
@@ -1558,6 +1905,74 @@ with gr.Blocks(
     switch_to_offline_btn.click(
         switch_wiki_to_offline_and_update,
         outputs=[wiki_switch_status, wiki_status]
+    )
+
+    # 为聊天历史添加原生右键菜单，并通过隐藏的 Gradio 组件调用后端事件。
+    demo.load(
+        fn=None,
+        js="""
+        () => {
+            if (window.__omnisageConversationMenuReady) return [];
+            window.__omnisageConversationMenuReady = true;
+
+            const closeMenu = () => {
+                document.getElementById('conversation-context-menu')?.remove();
+            };
+
+            document.addEventListener('click', closeMenu);
+            document.addEventListener('contextmenu', (event) => {
+                const label = event.target.closest('.conversation-history label');
+                if (!label) return;
+                event.preventDefault();
+                closeMenu();
+
+                const radio = label.querySelector('input[type="radio"]');
+                if (radio && !radio.checked) label.click();
+                const currentTitle = label.innerText.trim();
+
+                const menu = document.createElement('div');
+                menu.id = 'conversation-context-menu';
+                menu.style.left = `${event.clientX}px`;
+                menu.style.top = `${event.clientY}px`;
+
+                const rename = document.createElement('button');
+                rename.textContent = '重命名';
+                rename.onclick = (clickEvent) => {
+                    clickEvent.stopPropagation();
+                    const nextTitle = window.prompt('重命名对话', currentTitle);
+                    if (!nextTitle || !nextTitle.trim()) return closeMenu();
+                    const field = document.querySelector(
+                        '#context-conversation-title textarea, #context-conversation-title input'
+                    );
+                    if (field) {
+                        const prototype = field instanceof HTMLTextAreaElement
+                            ? window.HTMLTextAreaElement.prototype
+                            : window.HTMLInputElement.prototype;
+                        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+                        setter?.call(field, nextTitle.trim());
+                        field.dispatchEvent(new Event('input', { bubbles: true }));
+                        document.querySelector('#context-rename button')?.click();
+                    }
+                    closeMenu();
+                };
+
+                const remove = document.createElement('button');
+                remove.textContent = '删除';
+                remove.className = 'danger';
+                remove.onclick = (clickEvent) => {
+                    clickEvent.stopPropagation();
+                    if (window.confirm(`确定删除“${currentTitle}”吗？`)) {
+                        document.querySelector('#context-delete button')?.click();
+                    }
+                    closeMenu();
+                };
+
+                menu.append(rename, remove);
+                document.body.appendChild(menu);
+            });
+            return [];
+        }
+        """,
     )
 
 demo.launch()

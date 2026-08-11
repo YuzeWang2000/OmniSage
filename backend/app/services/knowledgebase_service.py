@@ -253,8 +253,8 @@ class KnowledgeBaseService:
             
             # 生成上下文
             context_parts = []
-            for doc, score in top_results:
-                context_parts.append(doc.page_content)
+            for content, score in top_results:
+                context_parts.append(content)
             
             context = "\n".join(context_parts)
             print(f"RAG检索到 {len(top_results)} 条相关文档")
@@ -324,7 +324,7 @@ class KnowledgeBaseService:
             print(f"添加文档到向量数据库失败: {str(e)}")
         return False
     
-    def _search_knowledge_base(self, query: str, vector_db_path: str, embedding_model: str, top_k: int) -> List[Tuple[Document, float]]:
+    def _search_knowledge_base(self, query: str, vector_db_path: str, embedding_model: str, top_k: int) -> List[Tuple[str, float]]:
         """从指定知识库中检索相关文档"""
         try:
             embeddings = OllamaEmbeddings(
@@ -335,20 +335,21 @@ class KnowledgeBaseService:
                 persist_directory=vector_db_path,
                 embedding_function=embeddings
             )
-            retriever = vectorstore.as_retriever(
-                search_type="similarity_score_threshold", 
-                search_kwargs={"k": top_k, "score_threshold": 0.8}  # 添加相似度阈值
+            # 直接返回最相关的 top_k 条结果。旧实现使用固定 0.8 阈值，
+            # 即便完全可用也经常把中文检索结果全部过滤掉。
+            docs_with_scores = vectorstore.similarity_search_with_relevance_scores(
+                query, k=top_k
             )
-            docs = retriever.get_relevant_documents(query)
-            
-            results = []
-            for doc in docs:
-                results.append((doc.page_content, 1.0))  # 简化处理，实际可以获取相似度分数
-            
-            return results
+            return [
+                (doc.page_content, float(score))
+                for doc, score in docs_with_scores
+            ]
         except Exception as e:
-            print(f"知识库检索失败: {str(e)}")
-            return []
+            error_text = str(e).strip() or repr(e)
+            raise RuntimeError(
+                f"知识库检索失败，无法使用嵌入模型 '{embedding_model}'。"
+                f"请确认 Ollama 服务可访问且模型已安装。原始错误: {error_text}"
+            ) from e
     
     def _delete_vectors_from_chroma(self, vector_db_path: str, filename: str) -> bool:
         """从ChromaDB中删除指定文件的向量数据"""

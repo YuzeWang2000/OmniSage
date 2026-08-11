@@ -124,6 +124,30 @@ def get_conversation_messages(conversation_id: int, user_id: int, db: Session = 
             detail="获取聊天历史失败"
         )
 
+
+@router.patch("/{conversation_id}")
+def rename_conversation(
+    conversation_id: int,
+    conversation: schemas.ConversationUpdate,
+    db: Session = Depends(get_db),
+):
+    """重命名属于当前用户的对话。"""
+    title = conversation.title.strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="对话标题不能为空",
+        )
+    success = DatabaseService.update_conversation_title(
+        conversation_id, conversation.user_id, title[:100], db
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对话不存在或无权限修改",
+        )
+    return {"message": "对话重命名成功", "title": title[:100]}
+
 @router.delete("/{conversation_id}")
 def delete_conversation(conversation_id: int, user_id: int, db: Session = Depends(get_db)):
     """删除对话"""

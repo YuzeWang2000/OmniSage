@@ -203,6 +203,49 @@ def get_knowledge_base_files(knowledge_base_id: int, user_id: int = Query(..., d
             detail=f"获取文件列表失败: {str(e)}"
         )
 
+
+@router.get("/knowledge-bases/{knowledge_base_id}/search")
+def search_knowledge_base(
+    knowledge_base_id: int,
+    user_id: int = Query(..., description="用户ID"),
+    query: str = Query(..., min_length=1, description="查询内容"),
+    top_k: int = Query(5, ge=1, le=20, description="返回结果数量"),
+    db: Session = Depends(get_db),
+):
+    """使用已有向量检索能力搜索用户指定的知识库。"""
+    knowledge_base = DatabaseService.get_knowledge_base_by_id(
+        knowledge_base_id, user_id, db
+    )
+    if not knowledge_base:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="知识库不存在或无权访问",
+        )
+    if not knowledge_base.vector_db_path or not os.path.exists(knowledge_base.vector_db_path):
+        return {"query": query, "knowledge_base_id": knowledge_base_id, "results": []}
+
+    try:
+        results = knowledge_base_service._search_knowledge_base(
+            query,
+            knowledge_base.vector_db_path,
+            knowledge_base.embedding_model,
+            top_k,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return {
+        "query": query,
+        "knowledge_base_id": knowledge_base_id,
+        "knowledge_base_name": knowledge_base.name,
+        "results": [
+            {"content": content, "score": score}
+            for content, score in results
+        ],
+    }
+
 @router.delete("/knowledge-bases/{knowledge_base_id}/files/{file_id}")
 def delete_file_from_knowledge_base(knowledge_base_id: int, file_id: int, user_id: int = Query(..., description="用户ID"), db: Session = Depends(get_db)):
     """
