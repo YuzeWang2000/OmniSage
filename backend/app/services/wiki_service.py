@@ -22,6 +22,8 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from ..config import settings
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -69,7 +71,10 @@ class WikiService:
         
         # 嵌入模型
         self.embedding_model = "nomic-embed-text"
-        self.embeddings = OllamaEmbeddings(model=self.embedding_model)
+        self.embeddings = OllamaEmbeddings(
+            model=self.embedding_model,
+            base_url=settings.OLLAMA_BASE_URL,
+        )
         
         # 根据模式初始化服务
         if self.mode == "auto":

@@ -16,6 +16,7 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.wiki_service import WikiService
+from app.config import settings
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
@@ -109,7 +110,10 @@ class WikiDataInitializer:
             
             # 初始化向量数据库
             logger.info("🔗 初始化Chroma向量数据库...")
-            embeddings = OllamaEmbeddings(model="nomic-embed-text")
+            embeddings = OllamaEmbeddings(
+                model=settings.EMBEDDING_MODEL,
+                base_url=settings.OLLAMA_BASE_URL,
+            )
             vectorstore = Chroma(
                 collection_name="wiki_articles",
                 embedding_function=embeddings,

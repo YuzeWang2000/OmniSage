@@ -307,7 +307,10 @@ class KnowledgeBaseService:
     def _add_documents_to_vectorstore(self, documents: List[Document], vector_db_path: str, embedding_model: str) -> bool:
         """将文档添加到指定知识库的向量数据库"""
         try:
-            embeddings = OllamaEmbeddings(model=embedding_model)
+            embeddings = OllamaEmbeddings(
+                model=embedding_model,
+                base_url=settings.OLLAMA_BASE_URL,
+            )
             vectorstore = Chroma(
                 persist_directory=vector_db_path,
                 embedding_function=embeddings
@@ -324,7 +327,10 @@ class KnowledgeBaseService:
     def _search_knowledge_base(self, query: str, vector_db_path: str, embedding_model: str, top_k: int) -> List[Tuple[Document, float]]:
         """从指定知识库中检索相关文档"""
         try:
-            embeddings = OllamaEmbeddings(model=embedding_model)
+            embeddings = OllamaEmbeddings(
+                model=embedding_model,
+                base_url=settings.OLLAMA_BASE_URL,
+            )
             vectorstore = Chroma(
                 persist_directory=vector_db_path,
                 embedding_function=embeddings
@@ -348,7 +354,10 @@ class KnowledgeBaseService:
         """从ChromaDB中删除指定文件的向量数据"""
         try:
             # 初始化嵌入模型（使用默认模型）
-            embeddings = OllamaEmbeddings(model="nomic-embed-text")
+            embeddings = OllamaEmbeddings(
+                model=settings.EMBEDDING_MODEL,
+                base_url=settings.OLLAMA_BASE_URL,
+            )
             
             # 加载向量数据库
             vectorstore = Chroma(

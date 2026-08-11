@@ -1,5 +1,5 @@
 # backend/app/services/llm_service.py
-from langchain_community.chat_models import ChatOpenAI, ChatOllama
+from langchain_community.chat_models import ChatOpenAI
 from langchain_ollama import ChatOllama, OllamaLLM
 
 from langchain_core.messages import HumanMessage, AIMessage
@@ -25,7 +25,10 @@ class LLMController:
     """
     
     def __init__(self):
-        self.embeddings = OllamaEmbeddings(model=settings.EMBEDDING_MODEL)
+        self.embeddings = OllamaEmbeddings(
+            model=settings.EMBEDDING_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+        )
         self.persist_dir = settings.VECTOR_DB_PATH
         self._vectorstore = None
     
@@ -93,12 +96,14 @@ class LLMController:
             if mode == "chat":
                 return ChatOllama(
                     model=model_name,
-                    temperature=settings.DEFAULT_TEMPERATURE
+                    temperature=settings.DEFAULT_TEMPERATURE,
+                    base_url=settings.OLLAMA_BASE_URL,
                 )
             elif mode == "generate":
                 return OllamaLLM(
                     model=model_name,
-                    temperature=settings.DEFAULT_TEMPERATURE
+                    temperature=settings.DEFAULT_TEMPERATURE,
+                    base_url=settings.OLLAMA_BASE_URL,
                 )
             else:
                 raise ValueError(f"不支持的模型模式: {mode}")

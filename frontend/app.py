@@ -46,6 +46,7 @@ def login_user(username, password):
         
         return (
             user_id,
+            f"**{username}**",
             f"✅ 登录成功，欢迎 {username}",
             gr.update(visible=False),  # 隐藏登录框
             gr.update(visible=True),   # 显示聊天区
@@ -58,6 +59,7 @@ def login_user(username, password):
         )
     except Exception as e:
         return (None, 
+                "",
                 f"❌ 登录失败: {str(e)}", 
                 gr.update(), 
                 gr.update(visible=False), 
@@ -84,6 +86,7 @@ def register_user(username, password, confirm_password):
 # 退出登录函数
 def logout_user():
     return (None,
+             "",
              "✅ 已退出登录", 
              gr.update(visible=True), 
              gr.update(visible=False), 
@@ -97,7 +100,8 @@ def logout_user():
 # 获取分类模型列表
 def get_categorized_models():
     try:
-        res = requests.get(f"{API_URL}/models")
+        res = requests.get(f"{API_URL}/models", timeout=10)
+        res.raise_for_status()
         data = res.json()
         local_models = data.get("local_models", [])
         online_models = data.get("online_models", [])
@@ -113,7 +117,8 @@ def get_categorized_models():
             categorized_models = ["None available models"]
         
         return categorized_models
-    except:
+    except Exception as exc:
+        print(f"获取模型列表失败: {exc}")
         return ["None available models"]
 
 # 获取默认模型
@@ -214,6 +219,28 @@ def switch_to_register():
 
 def switch_to_login():
     return gr.update(visible=True), gr.update(visible=False)
+
+
+def search_wiki(query):
+    """Search the configured Wiki source and format the result for the search page."""
+    query = (query or "").strip()
+    if not query:
+        return "请输入要搜索的内容。"
+
+    try:
+        res = requests.get(
+            f"{API_URL}/rag/enhance-context-with-wiki",
+            params={"query": query},
+            timeout=30,
+        )
+        res.raise_for_status()
+        data = res.json()
+        context = (data.get("enhanced_context") or "").strip()
+        if not context:
+            return f"未找到与 **{query}** 相关的内容。"
+        return f"## 搜索结果\n\n{context}"
+    except Exception as exc:
+        return f"❌ 搜索失败：{exc}"
 
 # 文件上传接口
 # 已废弃的upload_file函数 - 使用upload_file_to_knowledge_base替代
@@ -424,6 +451,7 @@ def send_message(message, user_id, conversation_id, mode, model, use_rag, use_wi
         "mode": mode.lower(),       # "chat" or "generate"
         "use_rag": use_rag,
         "use_wiki": use_wiki,       # 添加Wiki知识支持
+        "use_reranker": False,
         "stream": stream
     }
     
@@ -698,14 +726,139 @@ with gr.Blocks(
         border-color: #667eea !important;
         box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
     }
+    body, .gradio-container {
+        background: #f5f7fb !important;
+        color: #18202b !important;
+    }
+    .gradio-container {
+        max-width: 1480px !important;
+        padding: 24px 28px 40px !important;
+    }
+    .app-brand h2 {
+        margin: 0 0 18px !important;
+        color: #121820 !important;
+        font-size: 26px !important;
+        letter-spacing: -0.02em !important;
+    }
+    .top-nav {
+        align-items: center !important;
+        gap: 8px !important;
+        width: min(760px, 100%) !important;
+        margin: 0 auto 26px !important;
+        padding: 7px !important;
+        border: 1px solid #30343b !important;
+        border-radius: 999px !important;
+        background: #17191d !important;
+        box-shadow: 0 16px 36px rgba(16, 24, 40, 0.16) !important;
+    }
+    .top-nav > div {
+        gap: 8px !important;
+    }
+    .nav-btn {
+        min-width: 0 !important;
+        height: 50px !important;
+        padding: 0 22px !important;
+        border: 0 !important;
+        border-radius: 999px !important;
+        background: transparent !important;
+        color: #f5f7fa !important;
+        font-size: 16px !important;
+        font-weight: 600 !important;
+        box-shadow: none !important;
+        transition: color .2s ease, background .2s ease, transform .2s ease !important;
+    }
+    .nav-btn:hover {
+        background: #292c31 !important;
+        transform: translateY(-1px) !important;
+    }
+    .nav-btn.primary {
+        background: #f7f8fa !important;
+        color: #11151a !important;
+        box-shadow: inset 0 -3px 0 #21d4c2 !important;
+    }
+    .legacy-tabs {
+        display: none !important;
+    }
+    .page-shell {
+        min-height: 660px !important;
+    }
+    .welcome-page {
+        min-height: 570px !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border: 1px solid #e5e9f0 !important;
+        border-radius: 24px !important;
+        background: #ffffff !important;
+        box-shadow: 0 18px 50px rgba(16, 24, 40, 0.07) !important;
+        text-align: center !important;
+    }
+    .welcome-copy h1 {
+        margin: 0 !important;
+        color: #111827 !important;
+        font-size: clamp(38px, 6vw, 68px) !important;
+        line-height: 1.08 !important;
+        letter-spacing: -0.045em !important;
+    }
+    .welcome-user p {
+        margin: 18px 0 0 !important;
+        color: #667085 !important;
+        font-size: 20px !important;
+        font-weight: 600 !important;
+    }
+    .content-card, .sidebar, .main-chat-area {
+        border: 1px solid #e3e8ef !important;
+        border-radius: 20px !important;
+        background: #ffffff !important;
+        box-shadow: 0 12px 34px rgba(16, 24, 40, 0.07) !important;
+    }
+    .content-card {
+        padding: 24px !important;
+    }
+    .sidebar {
+        padding: 20px !important;
+        background: #ffffff !important;
+    }
+    .main-chat-area {
+        padding: 22px !important;
+        background: #ffffff !important;
+    }
+    .page-title h2 {
+        margin-top: 0 !important;
+        font-size: 28px !important;
+        letter-spacing: -0.02em !important;
+    }
+    .search-wrap {
+        max-width: 920px !important;
+        margin: 46px auto 0 !important;
+    }
+    .search-result {
+        min-height: 280px !important;
+        margin-top: 16px !important;
+        padding: 24px !important;
+        border: 1px solid #e3e8ef !important;
+        border-radius: 18px !important;
+        background: #fff !important;
+    }
+    .logout-row {
+        margin-top: 18px !important;
+        justify-content: flex-end !important;
+    }
+    .logout-btn {
+        max-width: 140px !important;
+    }
+    @media (max-width: 760px) {
+        .gradio-container { padding: 14px !important; }
+        .top-nav { border-radius: 22px !important; }
+        .nav-btn { height: 44px !important; padding: 0 10px !important; font-size: 14px !important; }
+        .welcome-page { min-height: 430px !important; }
+    }
     """
 ) as demo:
-    gr.Markdown("## 🧠 OmniSage")
+    gr.Markdown("## ◈ OmniSage", elem_classes="app-brand")
     # gr.Markdown("## 🧠 全知智者")
 
     user_id = gr.State()
     conversation_id = gr.State()
-    login_status = gr.Markdown("请登录")
     
     # 折叠状态跟踪
     api_key_visible = gr.State(False)
@@ -713,6 +866,7 @@ with gr.Blocks(
 
     # === 登录区 ===
     with gr.Column(visible=True) as login_area:
+        login_status = gr.Markdown("请登录")
         # 登录表单
         with gr.Column(visible=True) as login_form:
             username = gr.Textbox(label="用户名")
@@ -729,13 +883,35 @@ with gr.Blocks(
             switch_to_login_btn = gr.Button("已有账户？点击登录", variant="secondary")
             register_status = gr.Markdown()
 
-    # === 聊天区 ===
+    # === 登录后的应用区 ===
     with gr.Column(visible=False) as chat_area:
+        with gr.Row(elem_classes="top-nav"):
+            home_nav_btn = gr.Button("⌂  主页", variant="primary", elem_classes="nav-btn")
+            knowledge_nav_btn = gr.Button("知识库", variant="secondary", elem_classes="nav-btn")
+            chat_nav_btn = gr.Button("聊天", variant="secondary", elem_classes="nav-btn")
+            search_nav_btn = gr.Button("搜索", variant="secondary", elem_classes="nav-btn")
+
+        with gr.Column(visible=True, elem_classes="welcome-page") as home_page:
+            gr.Markdown("# Welcome to OmniSage", elem_classes="welcome-copy")
+            home_username = gr.Markdown(elem_classes="welcome-user")
+
+        with gr.Column(visible=False, elem_classes="search-wrap") as search_page:
+            gr.Markdown("## 搜索", elem_classes="page-title")
+            gr.Markdown("检索 Wiki 知识源中的相关内容。")
+            with gr.Row():
+                search_input = gr.Textbox(
+                    placeholder="输入关键词或问题...", show_label=False, scale=8
+                )
+                search_btn = gr.Button("搜索", variant="primary", scale=1)
+            search_result = gr.Markdown(
+                "搜索结果将在这里显示。", elem_classes="search-result"
+            )
+
         with gr.Row():
             # 左侧：管理面板
-            with gr.Column(scale=2, elem_classes="sidebar") as sidebar:
+            with gr.Column(visible=False, scale=2, elem_classes="sidebar") as sidebar:
                 # 标签页按钮
-                with gr.Row():
+                with gr.Row(elem_classes="legacy-tabs"):
                     tab_conversation_btn = gr.Button("💬 对话管理", variant="primary", size="sm", elem_classes="tab-btn")
                     tab_knowledge_btn = gr.Button("📚 知识库", variant="secondary", size="sm", elem_classes="tab-btn")
                     tab_settings_btn = gr.Button("⚙️ 设置", variant="secondary", size="sm", elem_classes="tab-btn")
@@ -869,7 +1045,7 @@ with gr.Blocks(
                 model = gr.Dropdown(choices=get_categorized_models(), label="模型", value=get_default_model())
                 
                 # 高级功能折叠区域
-                gr.Markdown("**🔧 高级功能**")
+                advanced_title = gr.Markdown("**🔧 高级功能**")
                 
                 # API Key管理折叠
                 with gr.Column(visible=False, elem_classes="collapsible-section") as api_key_section:
@@ -920,7 +1096,7 @@ with gr.Blocks(
                     toggle_audio_btn = gr.Button("🎤 语音", variant="secondary", size="sm", scale=1, elem_classes="toggle-btn")
                 
             # 右侧：聊天界面
-            with gr.Column(scale=4, elem_classes="main-chat-area") as main_chat:
+            with gr.Column(visible=False, scale=4, elem_classes="main-chat-area") as main_chat:
                 # 聊天历史显示区域
                 chatbot = gr.Chatbot(
                     height=500,
@@ -943,13 +1119,15 @@ with gr.Blocks(
                     with gr.Column(scale=1):
                         send_btn = gr.Button("发送", variant="primary", size="lg")
 
-    logout_btn = gr.Button("退出登录", visible=False, variant="stop")
+    logout_btn = gr.Button(
+        "退出登录", visible=False, variant="secondary", elem_classes="logout-btn"
+    )
 
     # === 事件绑定 ===
     login_btn.click(
         login_user,
         inputs=[username, password],
-        outputs=[user_id, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list]
+        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list]
     )
 
     # 注册相关事件
@@ -972,7 +1150,7 @@ with gr.Blocks(
 
     logout_btn.click(
         logout_user,
-        outputs=[user_id, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list]
+        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list]
     )
 
     # 新建对话
@@ -1306,58 +1484,52 @@ with gr.Blocks(
         outputs=[kb_file_list, delete_kb_file_status, kb_stats]
     )
 
-    # 标签页切换事件
-    def switch_to_conversation_tab():
-        """切换到对话管理标签页"""
+    # 顶部主导航：主页、知识库、聊天和搜索。
+    page_outputs = [
+        home_page, sidebar, main_chat, search_page,
+        conversation_tab, knowledge_tab, settings_tab,
+        mode, use_rag, model, advanced_title,
+        api_key_section, audio_section, toggle_api_key_btn, toggle_audio_btn,
+        home_nav_btn, knowledge_nav_btn, chat_nav_btn, search_nav_btn,
+    ]
+
+    def switch_main_page(page):
+        is_home = page == "home"
+        is_knowledge = page == "knowledge"
+        is_chat = page == "chat"
+        is_search = page == "search"
         return (
-            gr.update(visible=True),   # conversation_tab
-            gr.update(visible=False),  # knowledge_tab
-            gr.update(visible=False),  # settings_tab
-            gr.update(variant="primary"),   # tab_conversation_btn
-            gr.update(variant="secondary"), # tab_knowledge_btn
-            gr.update(variant="secondary")  # tab_settings_btn
+            gr.update(visible=is_home),
+            gr.update(visible=is_knowledge or is_chat),
+            gr.update(visible=is_chat),
+            gr.update(visible=is_search),
+            gr.update(visible=is_chat),
+            gr.update(visible=is_knowledge),
+            gr.update(visible=False),
+            gr.update(visible=is_chat),
+            gr.update(visible=is_chat),
+            gr.update(visible=is_chat),
+            gr.update(visible=is_chat),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=is_chat),
+            gr.update(visible=is_chat),
+            gr.update(variant="primary" if is_home else "secondary"),
+            gr.update(variant="primary" if is_knowledge else "secondary"),
+            gr.update(variant="primary" if is_chat else "secondary"),
+            gr.update(variant="primary" if is_search else "secondary"),
         )
-    
-    def switch_to_knowledge_tab():
-        """切换到知识库管理标签页"""
-        return (
-            gr.update(visible=False),  # conversation_tab
-            gr.update(visible=True),   # knowledge_tab
-            gr.update(visible=False),  # settings_tab
-            gr.update(variant="secondary"), # tab_conversation_btn
-            gr.update(variant="primary"),   # tab_knowledge_btn
-            gr.update(variant="secondary")  # tab_settings_btn
-        )
-    
-    def switch_to_settings_tab():
-        """切换到设置标签页"""
-        return (
-            gr.update(visible=False),  # conversation_tab
-            gr.update(visible=False),  # knowledge_tab
-            gr.update(visible=True),   # settings_tab
-            gr.update(variant="secondary"), # tab_conversation_btn
-            gr.update(variant="secondary"), # tab_knowledge_btn
-            gr.update(variant="primary")    # tab_settings_btn
-        )
-    
-    # 绑定标签页切换事件
-    tab_conversation_btn.click(
-        switch_to_conversation_tab,
-        outputs=[conversation_tab, knowledge_tab, settings_tab, 
-                tab_conversation_btn, tab_knowledge_btn, tab_settings_btn]
-    )
-    
-    tab_knowledge_btn.click(
-        switch_to_knowledge_tab,
-        outputs=[conversation_tab, knowledge_tab, settings_tab, 
-                tab_conversation_btn, tab_knowledge_btn, tab_settings_btn]
-    )
-    
-    tab_settings_btn.click(
-        switch_to_settings_tab,
-        outputs=[conversation_tab, knowledge_tab, settings_tab, 
-                tab_conversation_btn, tab_knowledge_btn, tab_settings_btn]
-    )
+
+    home_nav_btn.click(lambda: switch_main_page("home"), outputs=page_outputs)
+    knowledge_nav_btn.click(lambda: switch_main_page("knowledge"), outputs=page_outputs)
+    chat_nav_btn.click(lambda: switch_main_page("chat"), outputs=page_outputs)
+    search_nav_btn.click(lambda: switch_main_page("search"), outputs=page_outputs)
+
+    # 每次登录后都从主页开始，避免保留上一次退出时的页面状态。
+    login_btn.click(lambda: switch_main_page("home"), outputs=page_outputs)
+
+    search_btn.click(search_wiki, inputs=[search_input], outputs=[search_result])
+    search_input.submit(search_wiki, inputs=[search_input], outputs=[search_result])
     
     # Wiki状态刷新
     refresh_wiki_status_btn.click(

@@ -38,7 +38,10 @@ class OptimizedRAGChainService:
     """
     
     def __init__(self):
-        self.embeddings = OllamaEmbeddings(model=settings.EMBEDDING_MODEL)
+        self.embeddings = OllamaEmbeddings(
+            model=settings.EMBEDDING_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+        )
         self.base_vector_dir = settings.VECTOR_DB_PATH
         
         # 确保基础目录存在

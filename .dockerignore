@@ -1,0 +1,11 @@
+.git
+.gitignore
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.env
+frontend/vosk-model-small-cn-0.22.zip
+backend/chroma_db
+backend/uploaded_files
+backend/wiki_data
+result.txt
