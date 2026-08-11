@@ -4,6 +4,11 @@ from sqlalchemy.orm import Session
 from .. import schemas
 from ..database import SessionLocal
 from ..services.database_service import DatabaseService
+from ..security import (
+    AuthenticatedUser,
+    ensure_legacy_user_matches,
+    get_current_user,
+)
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
@@ -15,22 +20,20 @@ def get_db():
         db.close()
 
 @router.post("/", response_model=schemas.ApiKeyResponse)
-def create_api_key(api_key: schemas.ApiKeyCreate, db: Session = Depends(get_db)):
+def create_api_key(
+    api_key: schemas.ApiKeyCreate,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """
     创建API key
     """
     try:
-        # 检查用户是否存在
-        user = DatabaseService.get_user_by_id(api_key.user_id, db)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
+        ensure_legacy_user_matches(api_key.user_id, current_user)
         
         # 检查是否已存在相同provider的API key
         existing_key = DatabaseService.get_user_api_key_by_provider(
-            api_key.user_id, api_key.provider, db
+            current_user.id, api_key.provider, db
         )
         if existing_key:
             raise HTTPException(
@@ -40,7 +43,7 @@ def create_api_key(api_key: schemas.ApiKeyCreate, db: Session = Depends(get_db))
         
         # 创建新的API key
         new_api_key = DatabaseService.create_api_key(
-            user_id=api_key.user_id,
+            user_id=current_user.id,
             provider=api_key.provider,
             api_key=api_key.api_key,
             model_name=api_key.model_name,
@@ -59,21 +62,19 @@ def create_api_key(api_key: schemas.ApiKeyCreate, db: Session = Depends(get_db))
         )
 
 @router.get("/user/{user_id}", response_model=schemas.ApiKeyListResponse)
-def get_user_api_keys(user_id: int, db: Session = Depends(get_db)):
+def get_user_api_keys(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """
     获取用户的所有API key
     """
     try:
-        # 检查用户是否存在
-        user = DatabaseService.get_user_by_id(user_id, db)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
+        ensure_legacy_user_matches(user_id, current_user)
         
         # 获取用户的API keys
-        api_keys = DatabaseService.get_user_api_keys(user_id, db)
+        api_keys = DatabaseService.get_user_api_keys(current_user.id, db)
         
         return {"api_keys": api_keys}
         
@@ -127,13 +128,21 @@ def get_user_api_keys(user_id: int, db: Session = Depends(get_db)):
 #         )
 
 @router.delete("/{api_key_id}")
-def delete_api_key(api_key_id: int, user_id: int, db: Session = Depends(get_db)):
+def delete_api_key(
+    api_key_id: int,
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """
     删除API key
     """
     try:
         # 检查API key是否存在且属于该用户
-        api_key = DatabaseService.get_api_key_by_id(api_key_id, user_id, db)
+        ensure_legacy_user_matches(user_id, current_user)
+        api_key = DatabaseService.get_api_key_by_id(
+            api_key_id, current_user.id, db
+        )
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -152,4 +161,4 @@ def delete_api_key(api_key_id: int, user_id: int, db: Session = Depends(get_db))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"删除API key失败: {str(e)}"
-        ) 
+        )

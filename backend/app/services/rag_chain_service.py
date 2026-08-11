@@ -5,6 +5,7 @@
 
 import os
 import logging
+from threading import Lock
 from typing import List, Dict, Any, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_core.language_models import BaseLanguageModel
@@ -47,14 +48,28 @@ class OptimizedRAGChainService:
         # 确保基础目录存在
         os.makedirs(self.base_vector_dir, exist_ok=True)
         
-        # 初始化Wiki服务（默认使用自动模式）
-        try:
-            self.wiki_service = WikiService(mode="auto")  # 使用自动模式
-            self.wiki_kb = WikiKnowledgeBase(self.wiki_service)
-            logger.info(f"使用{self.wiki_service.mode}维基百科服务")
-        except Exception as e:
-            logger.error(f"所有Wiki服务都不可用: {str(e)}")
-            self.wiki_kb = None
+        # Wiki 仅在明确启用时初始化，普通 RAG 启动不再触发网络探测。
+        self.wiki_service = None
+        self.wiki_kb = None
+        self._wiki_initialized = False
+        self._wiki_lock = Lock()
+
+    def get_wiki_knowledge_base(self) -> Optional[WikiKnowledgeBase]:
+        if self._wiki_initialized:
+            return self.wiki_kb
+        with self._wiki_lock:
+            if self._wiki_initialized:
+                return self.wiki_kb
+            try:
+                self.wiki_service = WikiService(mode="auto")
+                self.wiki_kb = WikiKnowledgeBase(self.wiki_service)
+                logger.info("使用 %s 维基百科服务", self.wiki_service.mode)
+            except Exception:
+                logger.exception("Wiki 服务不可用；普通 RAG 仍可继续使用")
+                self.wiki_kb = None
+            finally:
+                self._wiki_initialized = True
+        return self.wiki_kb
     
     def create_rag_chain(
         self,
@@ -465,7 +480,7 @@ class OptimizedRAGChainService:
                     
                     # 显示检索结果
                     print("=" * 50)
-                    print("🔍 检索结果详情:")
+                    print("[SEARCH] 检索结果详情:")
                     print(f"查询: {query}")
                     print(f"检索到 {len(retrieved_docs)} 个相关文档:")
                     print("-" * 30)
@@ -500,7 +515,7 @@ class OptimizedRAGChainService:
                 
                 def stream(self, inputs):
                     query = inputs.get("input", "")
-                    print("🔍 检索结果详情:")
+                    print("[SEARCH] 检索结果详情:")
                     print(f"查询: {query}") 
                     # 先获取并显示检索结果
                     retrieved_docs = self.retriever.invoke(query)
@@ -550,6 +565,11 @@ class OptimizedRAGChainService:
         创建Wiki增强的Chain
         在原有RAG基础上增加Wiki知识
         """
+        wiki_kb = self.get_wiki_knowledge_base()
+        if wiki_kb is None:
+            logger.warning("Wiki 服务不可用，回退到基础 RAG Chain")
+            return base_chain
+
         class WikiEnhancedChain:
             def __init__(self, base_chain, wiki_kb):
                 self.base_chain = base_chain
@@ -606,7 +626,7 @@ class OptimizedRAGChainService:
                     for chunk in self.base_chain.stream(inputs):
                         yield chunk
         
-        return WikiEnhancedChain(base_chain, self.wiki_kb)
+        return WikiEnhancedChain(base_chain, wiki_kb)
     
     def _create_map_reduce_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
         """创建Map-Reduce Chain"""

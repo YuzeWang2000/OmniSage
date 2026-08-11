@@ -91,7 +91,7 @@ class WikiService:
             test_response = self.session.get(f"{self.wikipedia_api_url}/page/summary/测试", timeout=5)
             if test_response.status_code == 200:
                 self.mode = "online"
-                logger.info("✅ 在线维基百科服务可用，使用在线模式")
+                logger.info("在线维基百科服务可用，使用在线模式")
                 return
         except Exception as e:
             logger.warning(f"在线模式不可用: {str(e)}")
@@ -101,30 +101,30 @@ class WikiService:
             self._init_vectorstore()
             if self._check_offline_available():
                 self.mode = "offline"
-                logger.info("✅ 离线维基百科服务可用，使用离线模式")
+                logger.info("离线维基百科服务可用，使用离线模式")
             else:
                 # 离线模式也不可用，强制使用在线模式（可能会失败）
                 self.mode = "online"
-                logger.warning("⚠️ 离线模式不可用，强制使用在线模式")
+                logger.warning("离线模式不可用，强制使用在线模式")
         except Exception as e:
             logger.error(f"离线模式初始化失败: {str(e)}")
             self.mode = "online"
-            logger.warning("⚠️ 强制使用在线模式")
+            logger.warning("强制使用在线模式")
     
     def _init_online_mode(self):
         """初始化在线模式"""
         self.mode = "online"
-        logger.info("✅ 使用在线维基百科服务")
+        logger.info("使用在线维基百科服务")
     
     def _init_offline_mode(self):
         """初始化离线模式"""
         self.mode = "offline"
         self._init_vectorstore()
         if not self._check_offline_available():
-            logger.warning("⚠️ 离线模式不可用，将回退到在线模式")
+            logger.warning("离线模式不可用，将回退到在线模式")
             self.mode = "online"
         else:
-            logger.info("✅ 使用离线维基百科服务")
+            logger.info("使用离线维基百科服务")
     
     def switch_mode(self, new_mode: str) -> bool:
         """
@@ -145,13 +145,13 @@ class WikiService:
                 test_response = self.session.get(f"{self.wikipedia_api_url}/page/summary/测试", timeout=5)
                 if test_response.status_code == 200:
                     self.mode = "online"
-                    logger.info("✅ 切换到在线维基百科服务")
+                    logger.info("切换到在线维基百科服务")
                     return True
                 else:
-                    logger.error("❌ 在线模式不可用")
+                    logger.error("在线模式不可用")
                     return False
             except Exception as e:
-                logger.error(f"❌ 在线模式不可用: {str(e)}")
+                logger.error(f"在线模式不可用: {str(e)}")
                 return False
         
         elif new_mode == "offline":
@@ -159,13 +159,13 @@ class WikiService:
                 self._init_vectorstore()
                 if self._check_offline_available():
                     self.mode = "offline"
-                    logger.info("✅ 切换到离线维基百科服务")
+                    logger.info("切换到离线维基百科服务")
                     return True
                 else:
-                    logger.error("❌ 离线模式不可用")
+                    logger.error("离线模式不可用")
                     return False
             except Exception as e:
-                logger.error(f"❌ 离线模式不可用: {str(e)}")
+                logger.error(f"离线模式不可用: {str(e)}")
                 return False
         
         return False

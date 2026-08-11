@@ -15,8 +15,13 @@ class UserResponse(BaseModel):
     user_id: int
     username: str
 
+class AuthResponse(UserResponse):
+    access_token: str
+    token_type: str = "bearer"
+
 class ChatRequest(BaseModel):
-    user_id: int
+    # 兼容旧客户端；服务端身份始终取自 Bearer Token。
+    user_id: Optional[int] = None
     conversation_id: int
     message: str
     model: str
@@ -39,11 +44,11 @@ class FileUploadResponse(BaseModel):
     chunks: Optional[int] = 0
 
 class ConversationCreate(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     title: str
 
 class ConversationUpdate(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     title: str
 
 class ConversationResponse(BaseModel):
@@ -68,7 +73,7 @@ class ChatHistoryResponse(BaseModel):
 
 # API Key相关schemas
 class ApiKeyCreate(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     provider: str  # 'openai', 'deepseek', 'anthropic', etc.
     api_key: str
     model_name: Optional[str] = None
@@ -92,7 +97,7 @@ class ApiKeyUpdate(BaseModel):
 
 # 知识库相关schemas
 class KnowledgeBaseCreate(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     name: str
     description: Optional[str] = None
     embedding_model: str = "nomic-embed-text"
@@ -135,5 +140,19 @@ class KnowledgeBaseStats(BaseModel):
     total_files: int
     total_documents: int
     active_knowledge_bases: int
+
+class KnowledgeBaseSearchResult(BaseModel):
+    content: str
+    score: float
+    source: Optional[str] = None
+    page: Optional[int] = None
+    section: Optional[str] = None
+
+class KnowledgeBaseSearchResponse(BaseModel):
+    query: str
+    knowledge_base_id: int
+    knowledge_base_name: str
+    threshold: Optional[float] = None
+    results: List[KnowledgeBaseSearchResult]
 
 

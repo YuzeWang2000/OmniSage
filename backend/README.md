@@ -170,8 +170,13 @@ DATABASE_URL=mysql+pymysql://username:password@localhost/omnissage
 DEEPSEEK_API_KEY=your_deepseek_api_key
 OLLAMA_BASE_URL=http://localhost:11434
 
-# 其他配置
-SECRET_KEY=your_secret_key
+# JWT 鉴权配置（生产环境必须使用足够长的随机值）
+JWT_SECRET_KEY=replace_with_a_random_secret
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+
+# 检索相关性过滤（可选）
+SEARCH_MIN_SCORE=0.35
+SEARCH_SCORE_MARGIN=0.18
 ```
 
 ### 模型配置
@@ -242,4 +247,4 @@ SECRET_KEY=your_secret_key
 
 ## 许可证
 
-本项目采用 MIT 许可证。详见 [LICENSE](../LICENSE) 文件。 
+本项目采用 MIT 许可证。详见 [LICENSE](../LICENSE) 文件。

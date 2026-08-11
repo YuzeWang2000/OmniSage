@@ -5,9 +5,42 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from vosk import Model, KaldiRecognizer
 import wave
+from pathlib import Path
 
 # API_URL = "http://localhost:8000"  # 后端地址
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+ASSETS_DIR = Path(__file__).with_name("assets")
+APP_CSS = (ASSETS_DIR / "app.css").read_text(encoding="utf-8")
+
+
+def auth_headers(access_token):
+    if not access_token:
+        return {}
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+def build_home_dashboard(username, conversations, knowledge_bases):
+    recent = conversations[:5]
+    recent_lines = "\n".join(
+        f"- {item['title']} · {item.get('message_count', 0)} 条消息"
+        for item in recent
+    ) or "- 还没有对话，点击下方按钮开始。"
+    kb_lines = "\n".join(
+        f"- {item['name']} · {item.get('file_count', 0)} 个文件"
+        for item in knowledge_bases[:4]
+    ) or "- 还没有知识库，可以先创建一个。"
+    return f"""# 你好，{username}
+
+从最近的工作继续，或直接开始新的知识检索。
+
+### 最近对话
+{recent_lines}
+
+### 常用知识库
+{kb_lines}
+"""
+
+
 # 登录函数
 def login_user(username, password):
     try:
@@ -19,12 +52,19 @@ def login_user(username, password):
         res.raise_for_status()
         user_data = res.json()
         user_id = user_data["user_id"]
+        access_token = user_data["access_token"]
         
         # 三组互不依赖的数据并行加载，避免登录后串行等待多个接口。
         with ThreadPoolExecutor(max_workers=3) as executor:
-            conversations_future = executor.submit(get_user_conversations, user_id)
-            api_keys_future = executor.submit(get_user_api_keys, user_id)
-            knowledge_bases_future = executor.submit(fetch_user_knowledge_bases, user_id)
+            conversations_future = executor.submit(
+                get_user_conversations, user_id, access_token
+            )
+            api_keys_future = executor.submit(
+                get_user_api_keys, user_id, access_token
+            )
+            knowledge_bases_future = executor.submit(
+                fetch_user_knowledge_bases, user_id, access_token
+            )
             conversations = conversations_future.result()
             api_keys = api_keys_future.result()
             knowledge_base_data = knowledge_bases_future.result()
@@ -60,7 +100,8 @@ def login_user(username, password):
         
         return (
             user_id,
-            f"**{username}**",
+            access_token,
+            build_home_dashboard(username, conversations, knowledge_base_data),
             f"✅ 登录成功，欢迎 {username}",
             gr.update(visible=False),  # 隐藏登录框
             gr.update(visible=True),   # 显示聊天区
@@ -74,7 +115,8 @@ def login_user(username, password):
             gr.update(choices=search_knowledge_bases, value=None),
         )
     except Exception as e:
-        return (None, 
+        return (None,
+                "",
                 "",
                 f"❌ 登录失败: {str(e)}", 
                 gr.update(), 
@@ -104,6 +146,7 @@ def register_user(username, password, confirm_password):
 # 退出登录函数
 def logout_user():
     return (None,
+             "",
              "",
              "✅ 已退出登录", 
              gr.update(visible=True), 
@@ -150,11 +193,15 @@ def get_default_model():
         return "None available models"
 
 # 获取用户对话列表
-def get_user_conversations(user_id):
+def get_user_conversations(user_id, access_token):
     if not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/conversations/user/{user_id}", timeout=10)
+        res = requests.get(
+            f"{API_URL}/conversations/user/{user_id}",
+            headers=auth_headers(access_token),
+            timeout=10,
+        )
         res.raise_for_status()
         data = res.json()
         conversations = data.get("conversations", [])
@@ -189,11 +236,15 @@ def split_conversation_choices(conversations, selected_id=None):
     return recent_choices, more_choices
 
 # 获取用户API keys
-def get_user_api_keys(user_id):
+def get_user_api_keys(user_id, access_token):
     if not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/api-keys/user/{user_id}", timeout=10)
+        res = requests.get(
+            f"{API_URL}/api-keys/user/{user_id}",
+            headers=auth_headers(access_token),
+            timeout=10,
+        )
         res.raise_for_status()
         data = res.json()
         api_keys = data.get("api_keys", [])
@@ -202,7 +253,7 @@ def get_user_api_keys(user_id):
         return []
 
 # 创建API key
-def create_api_key(user_id, provider, api_key, model_name=None):
+def create_api_key(user_id, access_token, provider, api_key, model_name=None):
     if not user_id or not provider or not api_key:
         return None, "❌ 用户ID、提供商和API key不能为空"
     try:
@@ -212,7 +263,12 @@ def create_api_key(user_id, provider, api_key, model_name=None):
             "api_key": api_key,
             "model_name": model_name
         }
-        res = requests.post(f"{API_URL}/api-keys/", json=payload)
+        res = requests.post(
+            f"{API_URL}/api-keys/",
+            json=payload,
+            headers=auth_headers(access_token),
+            timeout=10,
+        )
         res.raise_for_status()
         data = res.json()
         return data, f"✅ {provider} API key 创建成功"
@@ -220,18 +276,22 @@ def create_api_key(user_id, provider, api_key, model_name=None):
         return None, f"❌ 创建API key失败: {str(e)}"
 
 # 删除API key
-def delete_api_key(api_key_id, user_id):
+def delete_api_key(api_key_id, user_id, access_token):
     if not api_key_id or not user_id:
         return "❌ 参数错误"
     try:
-        res = requests.delete(f"{API_URL}/api-keys/{api_key_id}?user_id={user_id}")
+        res = requests.delete(
+            f"{API_URL}/api-keys/{api_key_id}?user_id={user_id}",
+            headers=auth_headers(access_token),
+            timeout=10,
+        )
         res.raise_for_status()
         return "✅ API key删除成功"
     except Exception as e:
         return f"❌ 删除API key失败: {str(e)}"
 
 # 创建新对话
-def create_new_conversation(user_id, title):
+def create_new_conversation(user_id, access_token, title):
     if not user_id or not title:
         return None, "❌ 用户ID和标题不能为空"
     try:
@@ -239,7 +299,12 @@ def create_new_conversation(user_id, title):
             "user_id": user_id,
             "title": title
         }
-        res = requests.post(f"{API_URL}/conversations/", json=payload)
+        res = requests.post(
+            f"{API_URL}/conversations/",
+            json=payload,
+            headers=auth_headers(access_token),
+            timeout=10,
+        )
         res.raise_for_status()
         data = res.json()
         return data, f"✅ 对话 '{title}' 创建成功"
@@ -247,18 +312,22 @@ def create_new_conversation(user_id, title):
         return None, f"❌ 创建对话失败: {str(e)}"
 
 # 删除对话
-def delete_conversation(conversation_id, user_id):
+def delete_conversation(conversation_id, user_id, access_token):
     if not conversation_id or not user_id:
         return "❌ 参数错误"
     try:
-        res = requests.delete(f"{API_URL}/conversations/{conversation_id}?user_id={user_id}")
+        res = requests.delete(
+            f"{API_URL}/conversations/{conversation_id}?user_id={user_id}",
+            headers=auth_headers(access_token),
+            timeout=10,
+        )
         res.raise_for_status()
         return "✅ 对话删除成功"
     except Exception as e:
         return f"❌ 删除对话失败: {str(e)}"
 
 
-def rename_conversation(conversation_id, user_id, title):
+def rename_conversation(conversation_id, user_id, access_token, title):
     """更新对话标题。"""
     if not conversation_id or not user_id or not (title or "").strip():
         return "❌ 对话标题不能为空"
@@ -266,6 +335,7 @@ def rename_conversation(conversation_id, user_id, title):
         res = requests.patch(
             f"{API_URL}/conversations/{conversation_id}",
             json={"user_id": user_id, "title": title.strip()},
+            headers=auth_headers(access_token),
             timeout=10,
         )
         res.raise_for_status()
@@ -285,7 +355,7 @@ def switch_to_login():
     return gr.update(visible=True), gr.update(visible=False)
 
 
-def search_content(query, source, knowledge_base_id, user_id):
+def search_content(query, source, knowledge_base_id, user_id, access_token):
     """Search Wiki or one user-selected knowledge base."""
     query = (query or "").strip()
     if not query:
@@ -300,6 +370,7 @@ def search_content(query, source, knowledge_base_id, user_id):
             res = requests.get(
                 f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/search",
                 params={"user_id": user_id, "query": query, "top_k": 5},
+                headers=auth_headers(access_token),
                 timeout=30,
             )
             res.raise_for_status()
@@ -307,15 +378,24 @@ def search_content(query, source, knowledge_base_id, user_id):
             results = data.get("results", [])
             if not results:
                 return f"未在 **{data.get('knowledge_base_name', '所选知识库')}** 中找到相关内容。"
-            items = [
-                f"### {index}\n\n{item.get('content', '')}"
-                for index, item in enumerate(results, start=1)
-            ]
+            items = []
+            for index, item in enumerate(results, start=1):
+                score = float(item.get("score", 0))
+                source_name = item.get("source") or "未知来源"
+                page = f" · 第 {item['page']} 页" if item.get("page") else ""
+                section = f" · {item['section']}" if item.get("section") else ""
+                items.append(
+                    f"### {index}. {source_name}\n\n"
+                    f"**相关度 {score:.1%}{page}{section}**\n\n"
+                    f"{item.get('content', '')}"
+                )
             return "## 搜索结果\n\n" + "\n\n---\n\n".join(items)
 
         res = requests.get(
             f"{API_URL}/rag/enhance-context-with-wiki",
-            params={"query": query}, timeout=30,
+            params={"query": query},
+            headers=auth_headers(access_token),
+            timeout=30,
         )
         res.raise_for_status()
         context = (res.json().get("enhanced_context") or "").strip()
@@ -338,12 +418,16 @@ def search_content(query, source, knowledge_base_id, user_id):
 #         return f"❌ 上传失败: {str(e)}"
 
 # 知识库管理相关函数
-def fetch_user_knowledge_bases(user_id):
+def fetch_user_knowledge_bases(user_id, access_token):
     """只请求一次知识库数据，供卡片和搜索选择器共同使用。"""
     if not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/rag/knowledge-bases/{user_id}", timeout=10)
+        res = requests.get(
+            f"{API_URL}/rag/knowledge-bases/{user_id}",
+            headers=auth_headers(access_token),
+            timeout=10,
+        )
         res.raise_for_status()
         return res.json().get("knowledge_bases", [])
     except Exception as e:
@@ -368,13 +452,13 @@ def format_knowledge_base_choices(knowledge_bases, compact=False):
     return choices
 
 
-def get_user_knowledge_bases(user_id, compact=False):
+def get_user_knowledge_bases(user_id, access_token, compact=False):
     """获取并格式化用户知识库列表。"""
     return format_knowledge_base_choices(
-        fetch_user_knowledge_bases(user_id), compact=compact
+        fetch_user_knowledge_bases(user_id, access_token), compact=compact
     )
 
-def create_knowledge_base(user_id, name, description=""):
+def create_knowledge_base(user_id, access_token, name, description=""):
     """创建知识库"""
     if not user_id or not name:
         return "❗ 请先登录并输入知识库名称"
@@ -385,43 +469,61 @@ def create_knowledge_base(user_id, name, description=""):
             "description": description,
             "embedding_model": "nomic-embed-text"
         }
-        res = requests.post(f"{API_URL}/rag/knowledge-bases", json=payload)
+        res = requests.post(
+            f"{API_URL}/rag/knowledge-bases",
+            json=payload,
+            headers=auth_headers(access_token),
+            timeout=15,
+        )
         res.raise_for_status()
         return f"✅ 知识库 '{name}' 创建成功"
     except Exception as e:
         return f"❌ 创建知识库失败: {str(e)}"
 
-def delete_knowledge_base(knowledge_base_id, user_id):
+def delete_knowledge_base(knowledge_base_id, user_id, access_token):
     """删除知识库"""
     if not knowledge_base_id or not user_id:
         return "❗ 请先选择要删除的知识库"
     try:
-        res = requests.delete(f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}?user_id={user_id}")
+        res = requests.delete(
+            f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}?user_id={user_id}",
+            headers=auth_headers(access_token),
+            timeout=15,
+        )
         res.raise_for_status()
         return f"✅ 知识库删除成功"
     except Exception as e:
         return f"❌ 删除知识库失败: {str(e)}"
 
-def upload_file_to_knowledge_base(file, knowledge_base_id, user_id):
+def upload_file_to_knowledge_base(file, knowledge_base_id, user_id, access_token):
     """上传文件到指定知识库"""
     if not file or not knowledge_base_id or not user_id:
         return "❗ 请先选择知识库和文件"
     try:
         with open(file.name, "rb") as f:
             files = {"file": (file.name, f)}
-            res = requests.post(f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/files?user_id={user_id}", files=files)
+            res = requests.post(
+                f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/files?user_id={user_id}",
+                files=files,
+                headers=auth_headers(access_token),
+                timeout=120,
+            )
             res.raise_for_status()
             data = res.json()
             return f"✅ 文件上传成功: {file.name} (生成了{data.get('chunks', 0)}个文档块)"
     except Exception as e:
         return f"❌ 上传失败: {str(e)}"
 
-def get_knowledge_base_files(knowledge_base_id, user_id):
+def get_knowledge_base_files(knowledge_base_id, user_id, access_token):
     """获取知识库的文件列表"""
     if not knowledge_base_id or not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/files?user_id={user_id}")
+        res = requests.get(
+            f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/files?user_id={user_id}",
+            headers=auth_headers(access_token),
+            timeout=15,
+        )
         res.raise_for_status()
         data = res.json()
         files = data.get("files", [])
@@ -438,23 +540,31 @@ def get_knowledge_base_files(knowledge_base_id, user_id):
         print(f"获取文件列表失败: {str(e)}")
         return []
 
-def delete_file_from_knowledge_base(file_id, knowledge_base_id, user_id):
+def delete_file_from_knowledge_base(file_id, knowledge_base_id, user_id, access_token):
     """从知识库中删除文件"""
     if not file_id or not knowledge_base_id or not user_id:
         return "❗ 请先选择要删除的文件"
     try:
-        res = requests.delete(f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/files/{file_id}?user_id={user_id}")
+        res = requests.delete(
+            f"{API_URL}/rag/knowledge-bases/{knowledge_base_id}/files/{file_id}?user_id={user_id}",
+            headers=auth_headers(access_token),
+            timeout=15,
+        )
         res.raise_for_status()
         return f"✅ 文件删除成功"
     except Exception as e:
         return f"❌ 删除文件失败: {str(e)}"
 
-def get_knowledge_base_stats(user_id):
+def get_knowledge_base_stats(user_id, access_token):
     """获取用户知识库统计信息"""
     if not user_id:
         return "❗ 请先登录"
     try:
-        res = requests.get(f"{API_URL}/rag/stats/{user_id}")
+        res = requests.get(
+            f"{API_URL}/rag/stats/{user_id}",
+            headers=auth_headers(access_token),
+            timeout=15,
+        )
         res.raise_for_status()
         data = res.json()
         stats = f"📊 知识库统计: {data.get('total_knowledge_bases', 0)}个知识库, {data.get('total_files', 0)}个文件, {data.get('total_documents', 0)}个文档块"
@@ -462,10 +572,16 @@ def get_knowledge_base_stats(user_id):
     except Exception as e:
         return f"❌ 获取统计信息失败: {str(e)}"
 
-def get_wiki_status():
+def get_wiki_status(access_token):
     """获取Wiki知识状态"""
     try:
-        res = requests.get(f"{API_URL}/rag/wiki/status")
+        if not access_token:
+            return "登录后可查看 Wiki 服务状态。"
+        res = requests.get(
+            f"{API_URL}/rag/wiki/status",
+            headers=auth_headers(access_token),
+            timeout=15,
+        )
         res.raise_for_status()
         data = res.json()
         
@@ -500,10 +616,14 @@ def get_wiki_status():
     except Exception as e:
         return f"❌ 获取Wiki状态失败: {str(e)}"
 
-def switch_wiki_mode(mode):
+def switch_wiki_mode(mode, access_token):
     """切换Wiki服务模式"""
     try:
-        res = requests.post(f"{API_URL}/rag/wiki/switch-mode?mode={mode}")
+        res = requests.post(
+            f"{API_URL}/rag/wiki/switch-mode?mode={mode}",
+            headers=auth_headers(access_token),
+            timeout=30,
+        )
         res.raise_for_status()
         data = res.json()
         
@@ -515,7 +635,7 @@ def switch_wiki_mode(mode):
         return f"❌ 切换Wiki模式失败: {str(e)}"
 
 # 发送聊天消息（流式版本）
-def send_message(message, user_id, conversation_id, mode, model, use_rag, use_wiki, history, stream):
+def send_message(message, user_id, access_token, conversation_id, mode, model, use_rag, use_wiki, history, stream):
     if not message or not user_id or not conversation_id:
         yield history
         return
@@ -559,7 +679,13 @@ def send_message(message, user_id, conversation_id, mode, model, use_rag, use_wi
         
         # 使用流式接口
         import requests
-        response = requests.post(f"{API_URL}/chat/stream", json=payload, stream=True, timeout=60)
+        response = requests.post(
+            f"{API_URL}/chat/stream",
+            json=payload,
+            headers=auth_headers(access_token),
+            stream=True,
+            timeout=60,
+        )
         response.raise_for_status()
         
         # 移除加载状态
@@ -612,11 +738,16 @@ def send_message(message, user_id, conversation_id, mode, model, use_rag, use_wi
         yield history
 
 # 加载对话历史
-def load_conversation_history(conversation_id, user_id):
+def load_conversation_history(conversation_id, user_id, access_token):
     if not conversation_id or not user_id:
         return []
     try:
-        res = requests.get(f"{API_URL}/conversations/{conversation_id}/messages?user_id={user_id}")
+        res = requests.get(
+            f"{API_URL}/conversations/{conversation_id}/messages?user_id={user_id}",
+            headers=auth_headers(access_token),
+            timeout=15,
+        )
+        res.raise_for_status()
         data = res.json()
         messages = data.get("messages", [])
         
@@ -667,465 +798,10 @@ def transcribe(audio_path):
 # === Gradio UI ===
 with gr.Blocks(
     theme=gr.themes.Soft(),
-    css="""
-    .gradio-container {
-        max-width: 1600px !important;
-        margin: 0 auto !important;
-    }
-    .chatbot {
-        border-radius: 10px !important;
-        border: 1px solid #e0e0e0 !important;
-    }
-    .chatbot .message {
-        border-radius: 15px !important;
-        margin: 6px 0 !important;
-        font-size: 13px !important;
-        line-height: 1.4 !important;
-        padding: 8px 12px !important;
-    }
-    .chatbot .message.user {
-        background-color: #007bff !important;
-        color: white !important;
-        margin-left: 20% !important;
-    }
-    .chatbot .message.bot {
-        background-color: #f8f9fa !important;
-        color: #333 !important;
-        margin-right: 20% !important;
-    }
-    .chatbot .message .content {
-        font-size: 13px !important;
-        line-height: 1.4 !important;
-    }
-    .chatbot .message p {
-        font-size: 13px !important;
-        line-height: 1.4 !important;
-        margin: 0 !important;
-    }
-    .chatbot .message div {
-        font-size: 13px !important;
-        line-height: 1.4 !important;
-    }
-    .chatbot .message span {
-        font-size: 13px !important;
-        line-height: 1.4 !important;
-    }
-    .chatbot * {
-        font-size: 13px !important;
-        line-height: 1.4 !important;
-    }
-    .send-btn {
-        height: 100% !important;
-        border-radius: 8px !important;
-    }
-    .input-box {
-        border-radius: 8px !important;
-    }
-    .conversation-list {
-        max-height: 400px !important;
-        overflow-y: auto !important;
-    }
-    .sidebar {
-        background-color: #f8f9fa !important;
-        border-radius: 10px !important;
-        padding: 15px !important;
-        border: 1px solid #e0e0e0 !important;
-    }
-    .main-chat-area {
-        background-color: white !important;
-        border-radius: 10px !important;
-        padding: 20px !important;
-        border: 1px solid #e0e0e0 !important;
-    }
-    .audio-input .audio-component input {
-        height: 40px !important;
-        max-height: 40px !important;
-    }
-    .collapsible-section {
-        border: 1px solid #e0e0e0 !important;
-        border-radius: 8px !important;
-        padding: 15px !important;
-        margin: 10px 0 !important;
-        background-color: #fafafa !important;
-    }
-    .toggle-btn {
-        border-radius: 6px !important;
-        font-size: 12px !important;
-        padding: 6px 12px !important;
-    }
-    .toggle-btn:hover {
-        background-color: #e9ecef !important;
-    }
-    .tab-btn {
-        border-radius: 8px !important;
-        font-size: 12px !important;
-        padding: 8px 12px !important;
-        margin: 2px !important;
-        transition: all 0.3s ease !important;
-    }
-    .tab-btn:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1) !important;
-    }
-    .tab-btn.primary {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-        color: white !important;
-        border: none !important;
-    }
-    .tab-btn.secondary {
-        background: #f8f9fa !important;
-        color: #6c757d !important;
-        border: 1px solid #dee2e6 !important;
-    }
-    .tab-content {
-        padding: 15px !important;
-        border-radius: 10px !important;
-        background: white !important;
-        margin-top: 10px !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
-    }
-    .sidebar {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%) !important;
-        border-radius: 15px !important;
-        padding: 20px !important;
-        border: 1px solid #e0e0e0 !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
-    }
-    .main-chat-area {
-        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%) !important;
-        border-radius: 15px !important;
-        padding: 25px !important;
-        border: 1px solid #e0e0e0 !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
-    }
-    .chatbot {
-        border-radius: 15px !important;
-        border: 1px solid #e0e0e0 !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
-    }
-    .send-btn {
-        height: 100% !important;
-        border-radius: 12px !important;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-        border: none !important;
-        transition: all 0.3s ease !important;
-    }
-    .send-btn:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
-    }
-    .input-box {
-        border-radius: 12px !important;
-        border: 2px solid #e0e0e0 !important;
-        transition: border-color 0.3s ease !important;
-    }
-    .input-box:focus {
-        border-color: #667eea !important;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
-    }
-    body, .gradio-container {
-        background: #f5f7fb !important;
-        color: #18202b !important;
-    }
-    html, body, #root {
-        width: 100% !important;
-        height: 100% !important;
-        margin: 0 !important;
-    }
-    .gradio-container {
-        width: 100vw !important;
-        height: 100vh !important;
-        min-width: 1180px !important;
-        max-width: none !important;
-        padding: 24px 28px 40px !important;
-        overflow: auto !important;
-    }
-    .app-brand h2 {
-        margin: 0 0 24px !important;
-        color: #121820 !important;
-        font-size: 36px !important;
-        letter-spacing: -0.02em !important;
-        text-align: center !important;
-    }
-    .login-page {
-        min-height: calc(100vh - 64px) !important;
-        align-items: center !important;
-        justify-content: center !important;
-    }
-    .login-card {
-        width: 420px !important;
-        max-width: calc(100vw - 40px) !important;
-        padding: 28px !important;
-        border: 1px solid #e1e6ed !important;
-        border-radius: 20px !important;
-        background: #fff !important;
-        box-shadow: 0 18px 50px rgba(16, 24, 40, .10) !important;
-    }
-    .top-nav {
-        align-items: center !important;
-        gap: 8px !important;
-        width: min(900px, 100%) !important;
-        margin: 0 auto 26px !important;
-        padding: 7px !important;
-        border: 1px solid #30343b !important;
-        border-radius: 999px !important;
-        background: #17191d !important;
-        box-shadow: 0 16px 36px rgba(16, 24, 40, 0.16) !important;
-    }
-    .top-nav > div {
-        gap: 8px !important;
-    }
-    .nav-btn {
-        min-width: 0 !important;
-        height: 50px !important;
-        padding: 0 22px !important;
-        border: 0 !important;
-        border-radius: 999px !important;
-        background: transparent !important;
-        color: #f5f7fa !important;
-        font-size: 16px !important;
-        font-weight: 600 !important;
-        box-shadow: none !important;
-        transition: color .2s ease, background .2s ease, transform .2s ease !important;
-    }
-    .nav-btn:hover {
-        background: #292c31 !important;
-        transform: translateY(-1px) !important;
-    }
-    .nav-btn.primary {
-        background: #f7f8fa !important;
-        color: #11151a !important;
-        box-shadow: inset 0 -3px 0 #21d4c2 !important;
-    }
-    .legacy-tabs {
-        display: none !important;
-    }
-    .page-shell {
-        min-height: 660px !important;
-    }
-    .welcome-page {
-        min-height: 570px !important;
-        align-items: center !important;
-        justify-content: center !important;
-        border: 1px solid #e5e9f0 !important;
-        border-radius: 24px !important;
-        background: #ffffff !important;
-        box-shadow: 0 18px 50px rgba(16, 24, 40, 0.07) !important;
-        text-align: center !important;
-    }
-    .welcome-copy h1 {
-        margin: 0 !important;
-        color: #111827 !important;
-        font-size: clamp(38px, 6vw, 68px) !important;
-        line-height: 1.08 !important;
-        letter-spacing: -0.045em !important;
-    }
-    .welcome-user p {
-        margin: 18px 0 0 !important;
-        color: #667085 !important;
-        font-size: 20px !important;
-        font-weight: 600 !important;
-    }
-    .content-card, .sidebar, .main-chat-area {
-        border: 1px solid #e3e8ef !important;
-        border-radius: 20px !important;
-        background: #ffffff !important;
-        box-shadow: 0 12px 34px rgba(16, 24, 40, 0.07) !important;
-    }
-    .content-card {
-        padding: 24px !important;
-    }
-    .sidebar {
-        padding: 20px !important;
-        background: #ffffff !important;
-    }
-    .main-chat-area {
-        padding: 22px !important;
-        background: #ffffff !important;
-    }
-    .conversation-history {
-        max-height: 510px !important;
-        overflow-y: auto !important;
-    }
-    .conversation-history .wrap {
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 4px !important;
-    }
-    .conversation-history label {
-        width: 100% !important;
-        padding: 11px 12px !important;
-        border: 0 !important;
-        border-radius: 9px !important;
-        background: transparent !important;
-        cursor: pointer !important;
-        color: #514a46 !important;
-        font-size: 15px !important;
-        white-space: nowrap !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
-    }
-    .conversation-history label:hover,
-    .conversation-history label:has(input:checked) {
-        background: #eef1f5 !important;
-        color: #15191f !important;
-    }
-    .conversation-history input[type="radio"] {
-        display: none !important;
-    }
-    .context-bridge {
-        display: none !important;
-    }
-    #conversation-context-menu {
-        position: fixed;
-        z-index: 2000;
-        min-width: 138px;
-        padding: 6px;
-        border: 1px solid #dfe3e8;
-        border-radius: 10px;
-        background: #fff;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, .18);
-    }
-    #conversation-context-menu button {
-        width: 100%;
-        padding: 9px 12px;
-        border: 0;
-        border-radius: 7px;
-        background: transparent;
-        text-align: left;
-        cursor: pointer;
-    }
-    #conversation-context-menu button:hover { background: #f1f3f5; }
-    #conversation-context-menu button.danger { color: #d92d20; }
-    .chat-action-btn {
-        width: 74px !important;
-        min-width: 74px !important;
-        max-width: 74px !important;
-        height: 48px !important;
-        padding: 0 10px !important;
-        align-self: center !important;
-    }
-    .voice-trigger {
-        width: 48px !important;
-        min-width: 48px !important;
-        max-width: 48px !important;
-        font-size: 20px !important;
-    }
-    .voice-panel {
-        margin-top: 8px !important;
-        padding: 14px !important;
-        border: 1px solid #dfe4eb !important;
-        border-radius: 14px !important;
-        background: #f8fafc !important;
-    }
-    .voice-recorder {
-        width: 100% !important;
-        min-height: 120px !important;
-        overflow: visible !important;
-    }
-    .settings-panel {
-        max-width: 980px !important;
-        margin: 0 auto !important;
-    }
-    .page-title h2 {
-        margin-top: 0 !important;
-        font-size: 28px !important;
-        letter-spacing: -0.02em !important;
-    }
-    .search-wrap {
-        max-width: 920px !important;
-        margin: 46px auto 0 !important;
-    }
-    .search-result {
-        min-height: 280px !important;
-        margin-top: 16px !important;
-        padding: 24px !important;
-        border: 1px solid #e3e8ef !important;
-        border-radius: 18px !important;
-        background: #fff !important;
-    }
-    .search-source .wrap {
-        gap: 10px !important;
-    }
-    .kb-toolbar {
-        align-items: center !important;
-        justify-content: space-between !important;
-        margin-bottom: 16px !important;
-    }
-    .kb-create-trigger {
-        max-width: 180px !important;
-    }
-    .kb-grid .wrap {
-        display: grid !important;
-        grid-template-columns: repeat(3, minmax(260px, 1fr)) !important;
-        gap: 16px !important;
-        padding: 4px !important;
-    }
-    .kb-grid label {
-        min-height: 150px !important;
-        align-items: flex-start !important;
-        padding: 18px !important;
-        border: 1px solid #dfe4eb !important;
-        border-radius: 14px !important;
-        background: #fff !important;
-        box-shadow: 0 5px 16px rgba(16, 24, 40, .05) !important;
-        cursor: pointer !important;
-        transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease !important;
-    }
-    .kb-grid label:hover {
-        transform: translateY(-2px) !important;
-        border-color: #22b8a9 !important;
-        box-shadow: 0 10px 24px rgba(16, 24, 40, .10) !important;
-    }
-    .kb-grid label:has(input:checked) {
-        border-color: #12b8a6 !important;
-        box-shadow: 0 0 0 2px rgba(18, 184, 166, .18) !important;
-    }
-    .kb-grid label > span:last-child {
-        white-space: pre-line !important;
-        line-height: 1.7 !important;
-        font-size: 14px !important;
-    }
-    .kb-grid input[type="radio"] {
-        margin-top: 5px !important;
-    }
-    .kb-detail {
-        margin-top: 22px !important;
-        padding: 22px !important;
-        border: 1px solid #dfe4eb !important;
-        border-radius: 16px !important;
-        background: #f9fafb !important;
-    }
-    .kb-modal {
-        position: fixed !important;
-        inset: 50% auto auto 50% !important;
-        z-index: 1000 !important;
-        width: 520px !important;
-        max-width: calc(100vw - 40px) !important;
-        padding: 24px !important;
-        transform: translate(-50%, -50%) !important;
-        border: 1px solid #d8dee8 !important;
-        border-radius: 18px !important;
-        background: #fff !important;
-        box-shadow: 0 30px 90px rgba(0, 0, 0, .28) !important;
-    }
-    .logout-row {
-        margin-top: 18px !important;
-        justify-content: flex-end !important;
-    }
-    .logout-btn {
-        max-width: 140px !important;
-    }
-    @media (max-width: 1180px) {
-        .gradio-container { padding: 18px !important; }
-        .top-nav { border-radius: 22px !important; }
-        .nav-btn { height: 44px !important; padding: 0 10px !important; font-size: 14px !important; }
-        .welcome-page { min-height: 430px !important; }
-        .kb-grid .wrap { grid-template-columns: repeat(2, minmax(260px, 1fr)) !important; }
-    }
-    """
+    css=APP_CSS,
 ) as demo:
     user_id = gr.State()
+    access_token = gr.State("")
     conversation_id = gr.State()
     
     # === 登录区 ===
@@ -1158,8 +834,11 @@ with gr.Blocks(
             settings_nav_btn = gr.Button("设置", variant="secondary", elem_classes="nav-btn")
 
         with gr.Column(visible=True, elem_classes="welcome-page") as home_page:
-            gr.Markdown("# Welcome to OmniSage", elem_classes="welcome-copy")
-            home_username = gr.Markdown(elem_classes="welcome-user")
+            home_username = gr.Markdown(elem_classes="dashboard-copy")
+            with gr.Row(elem_classes="quick-actions"):
+                home_chat_btn = gr.Button("＋ 开始新对话", variant="primary")
+                home_kb_btn = gr.Button("▣ 管理知识库", variant="secondary")
+                home_search_btn = gr.Button("⌕ 搜索知识", variant="secondary")
 
         with gr.Column(visible=False, elem_classes="search-wrap") as search_page:
             gr.Markdown("## 搜索", elem_classes="page-title")
@@ -1183,12 +862,6 @@ with gr.Blocks(
         with gr.Row():
             # 左侧：管理面板
             with gr.Column(visible=False, scale=1, elem_classes="sidebar") as sidebar:
-                # 标签页按钮
-                with gr.Row(elem_classes="legacy-tabs"):
-                    tab_conversation_btn = gr.Button("💬 对话管理", variant="primary", size="sm", elem_classes="tab-btn")
-                    tab_knowledge_btn = gr.Button("📚 知识库", variant="secondary", size="sm", elem_classes="tab-btn")
-                    tab_settings_btn = gr.Button("⚙️ 设置", variant="secondary", size="sm", elem_classes="tab-btn")
-                
                 # 对话管理标签页
                 with gr.Column(visible=True, elem_classes="tab-content") as conversation_tab:
                     gr.Markdown("### 聊天")
@@ -1211,16 +884,40 @@ with gr.Blocks(
                     
                     delete_status = gr.Markdown()
 
-                    # 由右键菜单调用的桥接组件，不占用可见布局。
-                    context_conversation_title = gr.Textbox(
-                        elem_id="context-conversation-title", elem_classes="context-bridge"
-                    )
-                    context_rename_btn = gr.Button(
-                        "rename", elem_id="context-rename", elem_classes="context-bridge"
-                    )
-                    context_delete_btn = gr.Button(
-                        "delete", elem_id="context-delete", elem_classes="context-bridge"
-                    )
+                    with gr.Row(elem_classes="conversation-actions"):
+                        open_rename_conversation_btn = gr.Button(
+                            "重命名", variant="secondary", size="sm"
+                        )
+                        open_delete_conversation_btn = gr.Button(
+                            "删除", variant="stop", size="sm"
+                        )
+
+                    with gr.Column(
+                        visible=False, elem_classes="modal-overlay"
+                    ) as rename_conversation_modal:
+                        with gr.Column(elem_classes="modal-card"):
+                            gr.Markdown("### 重命名对话")
+                            conversation_title_input = gr.Textbox(
+                                label="新标题", max_lines=1
+                            )
+                            with gr.Row():
+                                cancel_rename_conversation_btn = gr.Button("取消")
+                                confirm_rename_conversation_btn = gr.Button(
+                                    "保存", variant="primary"
+                                )
+
+                    with gr.Column(
+                        visible=False, elem_classes="modal-overlay"
+                    ) as delete_conversation_modal:
+                        with gr.Column(elem_classes="modal-card"):
+                            gr.Markdown(
+                                "### 删除对话\n\n该对话及其聊天记录将不再显示，确定继续吗？"
+                            )
+                            with gr.Row():
+                                cancel_delete_conversation_btn = gr.Button("取消")
+                                confirm_delete_conversation_btn = gr.Button(
+                                    "确认删除", variant="stop"
+                                )
             
                 # 知识库管理标签页
                 with gr.Column(visible=False, elem_classes="tab-content") as knowledge_tab:
@@ -1255,19 +952,26 @@ with gr.Blocks(
                         delete_kb_file_status = gr.Markdown()
                         delete_kb_status = gr.Markdown()
 
-                    # Gradio 5.41 没有原生 Modal，使用固定定位面板实现弹窗。
-                    with gr.Column(visible=False, elem_classes="kb-modal") as new_kb_modal:
-                        gr.Markdown("### 新建知识库")
-                        new_kb_name = gr.Textbox(
-                            placeholder="输入知识库名称...", label="知识库名称"
-                        )
-                        new_kb_description = gr.Textbox(
-                            placeholder="知识库描述（可选）...", label="知识库描述", lines=3
-                        )
-                        with gr.Row():
-                            cancel_new_kb_btn = gr.Button("取消", variant="secondary")
-                            new_kb_btn = gr.Button("创建", variant="primary")
-                        new_kb_status = gr.Markdown()
+                    # Gradio 5.41 没有原生 Modal，使用统一遮罩层组件。
+                    with gr.Column(
+                        visible=False, elem_classes="modal-overlay"
+                    ) as new_kb_modal:
+                        with gr.Column(elem_classes="modal-card"):
+                            gr.Markdown("### 新建知识库")
+                            new_kb_name = gr.Textbox(
+                                placeholder="输入知识库名称...", label="知识库名称"
+                            )
+                            new_kb_description = gr.Textbox(
+                                placeholder="知识库描述（可选）...",
+                                label="知识库描述",
+                                lines=3,
+                            )
+                            with gr.Row():
+                                cancel_new_kb_btn = gr.Button(
+                                    "取消", variant="secondary"
+                                )
+                                new_kb_btn = gr.Button("创建", variant="primary")
+                            new_kb_status = gr.Markdown()
             
                 # 设置标签页
                 with gr.Column(visible=False, elem_classes=["tab-content", "settings-panel"]) as settings_tab:
@@ -1291,7 +995,7 @@ with gr.Blocks(
                     # Wiki状态显示
                     with gr.Row():
                         with gr.Column(scale=3):
-                            wiki_status = gr.Markdown(get_wiki_status())
+                            wiki_status = gr.Markdown("登录后可查看 Wiki 服务状态。")
                         with gr.Column(scale=1):
                             refresh_wiki_status_btn = gr.Button("🔄 刷新", variant="secondary", size="sm")
                     
@@ -1356,6 +1060,9 @@ with gr.Blocks(
                 
             # 右侧：聊天界面
             with gr.Column(visible=False, scale=4, elem_classes="main-chat-area") as main_chat:
+                chat_statusbar = gr.Markdown(
+                    elem_classes="chat-statusbar"
+                )
                 # 聊天历史显示区域
                 chatbot = gr.Chatbot(
                     height=500,
@@ -1399,7 +1106,7 @@ with gr.Blocks(
     login_btn.click(
         login_user,
         inputs=[username, password],
-        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, more_conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list, search_kb_list]
+        outputs=[user_id, access_token, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, more_conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list, search_kb_list]
     )
 
     # 注册相关事件
@@ -1422,16 +1129,18 @@ with gr.Blocks(
 
     logout_btn.click(
         logout_user,
-        outputs=[user_id, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, more_conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list, search_kb_list]
+        outputs=[user_id, access_token, home_username, login_status, login_area, chat_area, logout_btn, conversation_list, more_conversation_list, conversation_id, api_key_list, chatbot, knowledge_base_list, search_kb_list]
     )
 
     # 新建对话
-    def create_conversation_and_update(user_id):
+    def create_conversation_and_update(user_id, access_token):
         """直接创建空白对话，标题由首条消息自动生成。"""
-        conversation_data, status_msg = create_new_conversation(user_id, "新对话")
+        conversation_data, status_msg = create_new_conversation(
+            user_id, access_token, "新对话"
+        )
         
         if conversation_data:
-            conversations = get_user_conversations(user_id)
+            conversations = get_user_conversations(user_id, access_token)
             recent_choices, more_choices = split_conversation_choices(
                 conversations, conversation_data["id"]
             )
@@ -1446,42 +1155,78 @@ with gr.Blocks(
     
     new_conversation_btn.click(
         create_conversation_and_update,
-        inputs=[user_id],
+        inputs=[user_id, access_token],
         outputs=[conversation_list, more_conversation_list, new_conversation_status, conversation_id, chatbot]
     )
     
     # 删除对话
-    def delete_conversation_and_update(conversation_id, user_id):
+    def delete_conversation_and_update(conversation_id, user_id, access_token):
         """删除对话并更新列表"""
-        status_msg = delete_conversation(conversation_id, user_id)
+        status_msg = delete_conversation(conversation_id, user_id, access_token)
         
         if "成功" in status_msg:
-            conversations = get_user_conversations(user_id)
+            conversations = get_user_conversations(user_id, access_token)
             default_conversation_id = (
                 conversations[0]["id"] if conversations else None
             )
             recent_choices, more_choices = split_conversation_choices(
                 conversations, default_conversation_id
             )
-            history = load_conversation_history(default_conversation_id, user_id)
+            history = load_conversation_history(
+                default_conversation_id, user_id, access_token
+            )
             return (
                 gr.update(choices=recent_choices, value=default_conversation_id),
                 gr.update(choices=more_choices, value=None),
                 status_msg, default_conversation_id, history,
+                gr.update(visible=False),
             )
-        return gr.update(), gr.update(), status_msg, conversation_id, gr.update()
+        return (
+            gr.update(), gr.update(), status_msg, conversation_id,
+            gr.update(), gr.update(visible=True),
+        )
+
+    def open_rename_conversation(conversation_id, user_id, access_token):
+        if not conversation_id:
+            return gr.update(visible=False), ""
+        conversations = get_user_conversations(user_id, access_token)
+        title = next(
+            (item["title"] for item in conversations if item["id"] == conversation_id),
+            "",
+        )
+        return gr.update(visible=True), title
+
+    open_rename_conversation_btn.click(
+        open_rename_conversation,
+        inputs=[conversation_list, user_id, access_token],
+        outputs=[rename_conversation_modal, conversation_title_input],
+    )
+    cancel_rename_conversation_btn.click(
+        lambda: gr.update(visible=False), outputs=[rename_conversation_modal]
+    )
+    open_delete_conversation_btn.click(
+        lambda selected: gr.update(visible=bool(selected)),
+        inputs=[conversation_list], outputs=[delete_conversation_modal],
+    )
+    cancel_delete_conversation_btn.click(
+        lambda: gr.update(visible=False), outputs=[delete_conversation_modal]
+    )
     
-    context_delete_btn.click(
+    confirm_delete_conversation_btn.click(
         delete_conversation_and_update,
-        inputs=[conversation_list, user_id],
-        outputs=[conversation_list, more_conversation_list, delete_status, conversation_id, chatbot]
+        inputs=[conversation_list, user_id, access_token],
+        outputs=[conversation_list, more_conversation_list, delete_status, conversation_id, chatbot, delete_conversation_modal]
     )
 
-    def rename_conversation_and_update(conversation_id, user_id, title):
-        status_msg = rename_conversation(conversation_id, user_id, title)
+    def rename_conversation_and_update(
+        conversation_id, user_id, access_token, title
+    ):
+        status_msg = rename_conversation(
+            conversation_id, user_id, access_token, title
+        )
         if "成功" not in status_msg:
-            return gr.update(), gr.update(), status_msg
-        conversations = get_user_conversations(user_id)
+            return gr.update(), gr.update(), status_msg, gr.update(visible=True)
+        conversations = get_user_conversations(user_id, access_token)
         recent_choices, more_choices = split_conversation_choices(
             conversations, conversation_id
         )
@@ -1489,37 +1234,42 @@ with gr.Blocks(
             gr.update(choices=recent_choices, value=conversation_id),
             gr.update(choices=more_choices, value=None),
             status_msg,
+            gr.update(visible=False),
         )
 
-    context_rename_btn.click(
+    confirm_rename_conversation_btn.click(
         rename_conversation_and_update,
-        inputs=[conversation_list, user_id, context_conversation_title],
-        outputs=[conversation_list, more_conversation_list, delete_status],
+        inputs=[conversation_list, user_id, access_token, conversation_title_input],
+        outputs=[conversation_list, more_conversation_list, delete_status, rename_conversation_modal],
     )
     
     # 切换对话
-    def on_conversation_change(conversation_id, user_id):
+    def on_conversation_change(conversation_id, user_id, access_token):
         """切换对话时清空聊天历史"""
         if conversation_id is not None:
-            chat_history = load_conversation_history(conversation_id, user_id)
+            chat_history = load_conversation_history(
+                conversation_id, user_id, access_token
+            )
             return conversation_id, chat_history
         return conversation_id, []  # 返回空的消息列表
     
     conversation_list.input(
         on_conversation_change,
-        inputs=[conversation_list, user_id],
+        inputs=[conversation_list, user_id, access_token],
         outputs=[conversation_id, chatbot]
     )
 
-    def on_more_conversation_change(selected_id, user_id):
+    def on_more_conversation_change(selected_id, user_id, access_token):
         """从下拉框选择旧对话，并将它提升到可见历史列表。"""
         if selected_id is None:
             return gr.update(), None, [], gr.update()
-        conversations = get_user_conversations(user_id)
+        conversations = get_user_conversations(user_id, access_token)
         recent_choices, more_choices = split_conversation_choices(
             conversations, selected_id
         )
-        chat_history = load_conversation_history(selected_id, user_id)
+        chat_history = load_conversation_history(
+            selected_id, user_id, access_token
+        )
         return (
             gr.update(choices=recent_choices, value=selected_id),
             selected_id,
@@ -1529,7 +1279,7 @@ with gr.Blocks(
 
     more_conversation_list.input(
         on_more_conversation_change,
-        inputs=[more_conversation_list, user_id],
+        inputs=[more_conversation_list, user_id, access_token],
         outputs=[conversation_list, conversation_id, chatbot, more_conversation_list],
     )
 
@@ -1540,18 +1290,24 @@ with gr.Blocks(
     # file_input.upload(upload_file, inputs=[file_input, user_id], outputs=upload_status)
 
     # 发送消息的两种方式：回车和点击按钮
-    def send_and_clear(message, user_id, conversation_id, mode, model, use_rag, use_wiki, history):
+    def send_and_clear(
+        message, user_id, access_token, conversation_id,
+        mode, model, use_rag, use_wiki, history,
+    ):
         """发送消息并清空输入框"""
         if not message.strip():
             yield history, "", gr.update(), gr.update()
             return
         stream = True
         latest_history = history
-        for updated_history in send_message(message, user_id, conversation_id, mode, model, use_rag, use_wiki, history, stream):
+        for updated_history in send_message(
+            message, user_id, access_token, conversation_id,
+            mode, model, use_rag, use_wiki, history, stream,
+        ):
             latest_history = updated_history
             yield updated_history, "", gr.update(), gr.update()
 
-        conversations = get_user_conversations(user_id)
+        conversations = get_user_conversations(user_id, access_token)
         recent_choices, more_choices = split_conversation_choices(
             conversations, conversation_id
         )
@@ -1565,14 +1321,14 @@ with gr.Blocks(
     # 回车发送
     message_input.submit(
         send_and_clear,
-        inputs=[message_input, user_id, conversation_id, mode, model, use_rag, use_wiki, chatbot],
+        inputs=[message_input, user_id, access_token, conversation_id, mode, model, use_rag, use_wiki, chatbot],
         outputs=[chatbot, message_input, conversation_list, more_conversation_list]
     )
     
     # 按钮发送
     send_btn.click(
         send_and_clear,
-        inputs=[message_input, user_id, conversation_id, mode, model, use_rag, use_wiki, chatbot],
+        inputs=[message_input, user_id, access_token, conversation_id, mode, model, use_rag, use_wiki, chatbot],
         outputs=[chatbot, message_input, conversation_list, more_conversation_list]
     )
 
@@ -1590,16 +1346,21 @@ with gr.Blocks(
     )
 
     # API Key管理事件
-    def add_api_key_and_update(user_id, provider, api_key, model_name):
+    def add_api_key_and_update(
+        user_id, access_token, provider, api_key, model_name
+    ):
         """添加API key并更新列表"""
         if not api_key.strip():
             return gr.update(choices=[], value=None), "❌ 请输入API key", gr.update(value=""), gr.update(value="")
         
-        api_key_data, status_msg = create_api_key(user_id, provider, api_key.strip(), model_name.strip() if model_name else None)
+        api_key_data, status_msg = create_api_key(
+            user_id, access_token, provider, api_key.strip(),
+            model_name.strip() if model_name else None,
+        )
         
         if api_key_data:
             # 更新API key列表
-            api_keys = get_user_api_keys(user_id)
+            api_keys = get_user_api_keys(user_id, access_token)
             choices = []
             for key in api_keys:
                 display_text = f"{key['provider']}"
@@ -1613,14 +1374,14 @@ with gr.Blocks(
     
     add_api_key_btn.click(
         add_api_key_and_update,
-        inputs=[user_id, api_provider, api_key_input, api_model_name],
+        inputs=[user_id, access_token, api_provider, api_key_input, api_model_name],
         outputs=[api_key_list, api_key_status, api_key_input, api_model_name]
     )
     
     # 刷新API key列表
-    def refresh_api_keys(user_id):
+    def refresh_api_keys(user_id, access_token):
         """刷新API key列表"""
-        api_keys = get_user_api_keys(user_id)
+        api_keys = get_user_api_keys(user_id, access_token)
         choices = []
         
         for key in api_keys:
@@ -1633,18 +1394,18 @@ with gr.Blocks(
     
     refresh_api_keys_btn.click(
         refresh_api_keys,
-        inputs=[user_id],
+        inputs=[user_id, access_token],
         outputs=[api_key_list]
     )
     
     # 删除API key
-    def delete_api_key_and_update(api_key_id, user_id):
+    def delete_api_key_and_update(api_key_id, user_id, access_token):
         """删除API key并更新列表"""
-        status_msg = delete_api_key(api_key_id, user_id)
+        status_msg = delete_api_key(api_key_id, user_id, access_token)
         
         if "成功" in status_msg:
             # 更新API key列表
-            api_keys = get_user_api_keys(user_id)
+            api_keys = get_user_api_keys(user_id, access_token)
             choices = []
             
             for key in api_keys:
@@ -1659,7 +1420,7 @@ with gr.Blocks(
     
     delete_api_key_btn.click(
         delete_api_key_and_update,
-        inputs=[api_key_list, user_id],
+        inputs=[api_key_list, user_id, access_token],
         outputs=[api_key_list, delete_api_key_status]
     )
 
@@ -1672,17 +1433,24 @@ with gr.Blocks(
         outputs=[new_kb_modal, new_kb_name, new_kb_description, new_kb_status],
     )
 
-    def create_knowledge_base_and_update(user_id, name, description):
+    def create_knowledge_base_and_update(
+        user_id, access_token, name, description
+    ):
         """创建知识库并更新列表"""
         name = (name or "").strip()
         if not name:
             return gr.update(), gr.update(), "❌ 请输入知识库名称", gr.update(), gr.update(), gr.update(visible=True)
         
-        status_msg = create_knowledge_base(user_id, name, description.strip() if description else "")
+        status_msg = create_knowledge_base(
+            user_id, access_token, name,
+            description.strip() if description else "",
+        )
         
         if "成功" in status_msg:
-            knowledge_bases = get_user_knowledge_bases(user_id)
-            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            knowledge_bases = get_user_knowledge_bases(user_id, access_token)
+            search_choices = get_user_knowledge_bases(
+                user_id, access_token, compact=True
+            )
             return (
                 gr.update(choices=knowledge_bases, value=None),
                 gr.update(choices=search_choices, value=None),
@@ -1692,18 +1460,24 @@ with gr.Blocks(
     
     new_kb_btn.click(
         create_knowledge_base_and_update,
-        inputs=[user_id, new_kb_name, new_kb_description],
+        inputs=[user_id, access_token, new_kb_name, new_kb_description],
         outputs=[knowledge_base_list, search_kb_list, new_kb_status, new_kb_name, new_kb_description, new_kb_modal]
     )
     
     # 删除知识库
-    def delete_knowledge_base_and_update(knowledge_base_id, user_id):
+    def delete_knowledge_base_and_update(
+        knowledge_base_id, user_id, access_token
+    ):
         """删除知识库并更新列表"""
-        status_msg = delete_knowledge_base(knowledge_base_id, user_id)
+        status_msg = delete_knowledge_base(
+            knowledge_base_id, user_id, access_token
+        )
         
         if "成功" in status_msg:
-            knowledge_bases = get_user_knowledge_bases(user_id)
-            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            knowledge_bases = get_user_knowledge_bases(user_id, access_token)
+            search_choices = get_user_knowledge_bases(
+                user_id, access_token, compact=True
+            )
             return (
                 gr.update(choices=knowledge_bases, value=None),
                 gr.update(choices=search_choices, value=None),
@@ -1714,15 +1488,17 @@ with gr.Blocks(
     
     delete_kb_btn.click(
         delete_knowledge_base_and_update,
-        inputs=[knowledge_base_list, user_id],
+        inputs=[knowledge_base_list, user_id, access_token],
         outputs=[knowledge_base_list, search_kb_list, delete_kb_status, kb_detail_panel]
     )
     
     # 刷新知识库列表
-    def refresh_knowledge_bases(user_id):
+    def refresh_knowledge_bases(user_id, access_token):
         """刷新知识库列表"""
-        knowledge_bases = get_user_knowledge_bases(user_id)
-        search_choices = get_user_knowledge_bases(user_id, compact=True)
+        knowledge_bases = get_user_knowledge_bases(user_id, access_token)
+        search_choices = get_user_knowledge_bases(
+            user_id, access_token, compact=True
+        )
         return (
             gr.update(choices=knowledge_bases, value=None),
             gr.update(choices=search_choices, value=None),
@@ -1731,23 +1507,29 @@ with gr.Blocks(
     
     refresh_kb_btn.click(
         refresh_knowledge_bases,
-        inputs=[user_id],
+        inputs=[user_id, access_token],
         outputs=[knowledge_base_list, search_kb_list, kb_detail_panel]
     )
     
     # 知识库选择变化时更新文件列表和统计信息
-    def on_knowledge_base_change(knowledge_base_id, user_id):
+    def on_knowledge_base_change(
+        knowledge_base_id, user_id, access_token
+    ):
         """知识库选择变化时的处理"""
         if not knowledge_base_id or not user_id:
             return gr.update(choices=[], value=None), "", gr.update(visible=False), "### 知识库详情"
         
         # 更新文件列表
-        files = get_knowledge_base_files(knowledge_base_id, user_id)
+        files = get_knowledge_base_files(
+            knowledge_base_id, user_id, access_token
+        )
         
         # 更新统计信息
-        stats = get_knowledge_base_stats(user_id)
+        stats = get_knowledge_base_stats(user_id, access_token)
         
-        compact_choices = get_user_knowledge_bases(user_id, compact=True)
+        compact_choices = get_user_knowledge_bases(
+            user_id, access_token, compact=True
+        )
         selected_name = next(
             (label for label, value in compact_choices if value == knowledge_base_id),
             "知识库详情",
@@ -1756,22 +1538,30 @@ with gr.Blocks(
     
     knowledge_base_list.change(
         on_knowledge_base_change,
-        inputs=[knowledge_base_list, user_id],
+        inputs=[knowledge_base_list, user_id, access_token],
         outputs=[kb_file_list, kb_stats, kb_detail_panel, selected_kb_title]
     )
     
     # 上传文件到知识库
-    def upload_file_to_kb_and_update(file, knowledge_base_id, user_id):
+    def upload_file_to_kb_and_update(
+        file, knowledge_base_id, user_id, access_token
+    ):
         """上传文件到知识库并更新文件列表"""
         if not file or not knowledge_base_id or not user_id:
             return "❗ 请先选择知识库和文件", gr.update(), gr.update(), gr.update()
         
-        status_msg = upload_file_to_knowledge_base(file, knowledge_base_id, user_id)
+        status_msg = upload_file_to_knowledge_base(
+            file, knowledge_base_id, user_id, access_token
+        )
         
         if "成功" in status_msg:
-            files = get_knowledge_base_files(knowledge_base_id, user_id)
-            cards = get_user_knowledge_bases(user_id)
-            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            files = get_knowledge_base_files(
+                knowledge_base_id, user_id, access_token
+            )
+            cards = get_user_knowledge_bases(user_id, access_token)
+            search_choices = get_user_knowledge_bases(
+                user_id, access_token, compact=True
+            )
             return (
                 status_msg,
                 gr.update(choices=files, value=None),
@@ -1782,24 +1572,32 @@ with gr.Blocks(
     
     kb_upload_btn.click(
         upload_file_to_kb_and_update,
-        inputs=[kb_file_input, knowledge_base_list, user_id],
+        inputs=[kb_file_input, knowledge_base_list, user_id, access_token],
         outputs=[kb_upload_status, kb_file_list, knowledge_base_list, search_kb_list]
     )
     
     # 删除知识库文件
-    def delete_kb_file_and_update(file_id, knowledge_base_id, user_id):
+    def delete_kb_file_and_update(
+        file_id, knowledge_base_id, user_id, access_token
+    ):
         """删除知识库文件并更新列表"""
         if not file_id or not knowledge_base_id or not user_id:
             return gr.update(), "❗ 请先选择要删除的文件", gr.update(), gr.update(), gr.update()
         
-        status_msg = delete_file_from_knowledge_base(file_id, knowledge_base_id, user_id)
+        status_msg = delete_file_from_knowledge_base(
+            file_id, knowledge_base_id, user_id, access_token
+        )
         
         if "成功" in status_msg:
             # 更新文件列表
-            files = get_knowledge_base_files(knowledge_base_id, user_id)
-            stats = get_knowledge_base_stats(user_id)
-            cards = get_user_knowledge_bases(user_id)
-            search_choices = get_user_knowledge_bases(user_id, compact=True)
+            files = get_knowledge_base_files(
+                knowledge_base_id, user_id, access_token
+            )
+            stats = get_knowledge_base_stats(user_id, access_token)
+            cards = get_user_knowledge_bases(user_id, access_token)
+            search_choices = get_user_knowledge_bases(
+                user_id, access_token, compact=True
+            )
             return (
                 gr.update(choices=files, value=None), status_msg, stats,
                 gr.update(choices=cards, value=knowledge_base_id),
@@ -1809,13 +1607,14 @@ with gr.Blocks(
     
     delete_kb_file_btn.click(
         delete_kb_file_and_update,
-        inputs=[kb_file_list, knowledge_base_list, user_id],
+        inputs=[kb_file_list, knowledge_base_list, user_id, access_token],
         outputs=[kb_file_list, delete_kb_file_status, kb_stats, knowledge_base_list, search_kb_list]
     )
 
     # 顶部主导航：主页、知识库、聊天、搜索和设置。
     page_outputs = [
         home_page, sidebar, main_chat, search_page, new_kb_modal,
+        rename_conversation_modal, delete_conversation_modal,
         conversation_tab, knowledge_tab, settings_tab,
         mode, use_rag, model, advanced_title,
         api_key_section,
@@ -1834,6 +1633,8 @@ with gr.Blocks(
             gr.update(visible=is_chat),
             gr.update(visible=is_search),
             gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
             gr.update(visible=is_chat),
             gr.update(visible=is_knowledge),
             gr.update(visible=is_settings),
@@ -1850,15 +1651,55 @@ with gr.Blocks(
         )
 
     home_nav_btn.click(lambda: switch_main_page("home"), outputs=page_outputs)
+    home_chat_btn.click(lambda: switch_main_page("chat"), outputs=page_outputs)
+    home_chat_btn.click(
+        create_conversation_and_update,
+        inputs=[user_id, access_token],
+        outputs=[
+            conversation_list,
+            more_conversation_list,
+            new_conversation_status,
+            conversation_id,
+            chatbot,
+        ],
+    )
+    home_kb_btn.click(lambda: switch_main_page("knowledge"), outputs=page_outputs)
+    home_search_btn.click(lambda: switch_main_page("search"), outputs=page_outputs)
     knowledge_nav_btn.click(lambda: switch_main_page("knowledge"), outputs=page_outputs)
     chat_nav_btn.click(lambda: switch_main_page("chat"), outputs=page_outputs)
     chat_nav_btn.click(
         on_conversation_change,
-        inputs=[conversation_list, user_id],
+        inputs=[conversation_list, user_id, access_token],
         outputs=[conversation_id, chatbot],
     )
     search_nav_btn.click(lambda: switch_main_page("search"), outputs=page_outputs)
     settings_nav_btn.click(lambda: switch_main_page("settings"), outputs=page_outputs)
+    settings_nav_btn.click(
+        get_wiki_status, inputs=[access_token], outputs=[wiki_status]
+    )
+
+    def render_chat_status(mode_value, model_value, rag_enabled, wiki_enabled):
+        clean_model = (model_value or "未选择模型").replace("🖥️ ", "").replace("🌐 ", "")
+        rag_text = "RAG 已开启 · 全部启用知识库" if rag_enabled else "RAG 已关闭"
+        wiki_text = "Wiki 已开启" if wiki_enabled else "Wiki 已关闭"
+        return f"**{clean_model}**　·　{mode_value}　·　{rag_text}　·　{wiki_text}"
+
+    for status_control in (mode, model, use_rag, use_wiki):
+        status_control.change(
+            render_chat_status,
+            inputs=[mode, model, use_rag, use_wiki],
+            outputs=[chat_statusbar],
+        )
+    chat_nav_btn.click(
+        render_chat_status,
+        inputs=[mode, model, use_rag, use_wiki],
+        outputs=[chat_statusbar],
+    )
+    home_chat_btn.click(
+        render_chat_status,
+        inputs=[mode, model, use_rag, use_wiki],
+        outputs=[chat_statusbar],
+    )
 
     # 每次登录后都从主页开始，避免保留上一次退出时的页面状态。
     login_btn.click(lambda: switch_main_page("home"), outputs=page_outputs)
@@ -1869,110 +1710,46 @@ with gr.Blocks(
     )
     search_btn.click(
         search_content,
-        inputs=[search_input, search_source, search_kb_list, user_id],
+        inputs=[search_input, search_source, search_kb_list, user_id, access_token],
         outputs=[search_result],
     )
     search_input.submit(
         search_content,
-        inputs=[search_input, search_source, search_kb_list, user_id],
+        inputs=[search_input, search_source, search_kb_list, user_id, access_token],
         outputs=[search_result],
     )
     
     # Wiki状态刷新
     refresh_wiki_status_btn.click(
-        lambda: get_wiki_status(),
+        get_wiki_status,
+        inputs=[access_token],
         outputs=[wiki_status]
     )
     
     # Wiki模式切换
-    def switch_wiki_to_online_and_update():
+    def switch_wiki_to_online_and_update(access_token):
         """切换到在线模式并更新状态"""
-        result = switch_wiki_mode("online")
-        new_status = get_wiki_status()
+        result = switch_wiki_mode("online", access_token)
+        new_status = get_wiki_status(access_token)
         return result, new_status
     
-    def switch_wiki_to_offline_and_update():
+    def switch_wiki_to_offline_and_update(access_token):
         """切换到离线模式并更新状态"""
-        result = switch_wiki_mode("offline")
-        new_status = get_wiki_status()
+        result = switch_wiki_mode("offline", access_token)
+        new_status = get_wiki_status(access_token)
         return result, new_status
     
     switch_to_online_btn.click(
         switch_wiki_to_online_and_update,
+        inputs=[access_token],
         outputs=[wiki_switch_status, wiki_status]
     )
     
     switch_to_offline_btn.click(
         switch_wiki_to_offline_and_update,
+        inputs=[access_token],
         outputs=[wiki_switch_status, wiki_status]
     )
 
-    # 为聊天历史添加原生右键菜单，并通过隐藏的 Gradio 组件调用后端事件。
-    demo.load(
-        fn=None,
-        js="""
-        () => {
-            if (window.__omnisageConversationMenuReady) return [];
-            window.__omnisageConversationMenuReady = true;
-
-            const closeMenu = () => {
-                document.getElementById('conversation-context-menu')?.remove();
-            };
-
-            document.addEventListener('click', closeMenu);
-            document.addEventListener('contextmenu', (event) => {
-                const label = event.target.closest('.conversation-history label');
-                if (!label) return;
-                event.preventDefault();
-                closeMenu();
-
-                const radio = label.querySelector('input[type="radio"]');
-                if (radio && !radio.checked) label.click();
-                const currentTitle = label.innerText.trim();
-
-                const menu = document.createElement('div');
-                menu.id = 'conversation-context-menu';
-                menu.style.left = `${event.clientX}px`;
-                menu.style.top = `${event.clientY}px`;
-
-                const rename = document.createElement('button');
-                rename.textContent = '重命名';
-                rename.onclick = (clickEvent) => {
-                    clickEvent.stopPropagation();
-                    const nextTitle = window.prompt('重命名对话', currentTitle);
-                    if (!nextTitle || !nextTitle.trim()) return closeMenu();
-                    const field = document.querySelector(
-                        '#context-conversation-title textarea, #context-conversation-title input'
-                    );
-                    if (field) {
-                        const prototype = field instanceof HTMLTextAreaElement
-                            ? window.HTMLTextAreaElement.prototype
-                            : window.HTMLInputElement.prototype;
-                        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
-                        setter?.call(field, nextTitle.trim());
-                        field.dispatchEvent(new Event('input', { bubbles: true }));
-                        document.querySelector('#context-rename button')?.click();
-                    }
-                    closeMenu();
-                };
-
-                const remove = document.createElement('button');
-                remove.textContent = '删除';
-                remove.className = 'danger';
-                remove.onclick = (clickEvent) => {
-                    clickEvent.stopPropagation();
-                    if (window.confirm(`确定删除“${currentTitle}”吗？`)) {
-                        document.querySelector('#context-delete button')?.click();
-                    }
-                    closeMenu();
-                };
-
-                menu.append(rename, remove);
-                document.body.appendChild(menu);
-            });
-            return [];
-        }
-        """,
-    )
-
-demo.launch()
+if __name__ == "__main__":
+    demo.launch()

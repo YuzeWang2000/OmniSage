@@ -43,5 +43,23 @@ class Settings:
     # 模型温度配置
     DEFAULT_TEMPERATURE: float = 0.7
 
+    # 鉴权配置。生产环境必须通过环境变量覆盖默认密钥。
+    JWT_SECRET_KEY: str = (
+        os.getenv("JWT_SECRET_KEY")
+        or os.getenv("SECRET_KEY")  # 兼容旧版部署变量
+        or "omnisage-dev-secret-change-before-production"
+    )
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
+        os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")
+    )
+
+    # 独立知识库搜索的动态相关性过滤参数。
+    SEARCH_MIN_SCORE: float = float(os.getenv("SEARCH_MIN_SCORE", "0.35"))
+    SEARCH_SCORE_MARGIN: float = float(os.getenv("SEARCH_SCORE_MARGIN", "0.18"))
+    SEARCH_CANDIDATE_MULTIPLIER: int = int(
+        os.getenv("SEARCH_CANDIDATE_MULTIPLIER", "3")
+    )
+
 # 全局配置实例
-settings = Settings() 
+settings = Settings()

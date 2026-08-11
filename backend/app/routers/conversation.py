@@ -4,6 +4,11 @@ from sqlalchemy.orm import Session
 from .. import schemas
 from ..database import SessionLocal
 from ..services.database_service import DatabaseService
+from ..security import (
+    AuthenticatedUser,
+    ensure_legacy_user_matches,
+    get_current_user,
+)
 from datetime import datetime
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -16,20 +21,18 @@ def get_db():
         db.close()
 
 @router.post("/", response_model=schemas.ConversationResponse)
-def create_conversation(conversation: schemas.ConversationCreate, db: Session = Depends(get_db)):
+def create_conversation(
+    conversation: schemas.ConversationCreate,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """创建新对话"""
     try:
-        # 验证用户是否存在
-        user = DatabaseService.get_user_by_id(conversation.user_id, db)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户不存在"
-            )
+        ensure_legacy_user_matches(conversation.user_id, current_user)
         
         # 创建对话
         new_conversation = DatabaseService.create_conversation(
-            conversation.user_id, 
+            current_user.id,
             conversation.title, 
             db
         )
@@ -60,10 +63,15 @@ def create_conversation(conversation: schemas.ConversationCreate, db: Session = 
         )
 
 @router.get("/user/{user_id}", response_model=schemas.ConversationListResponse)
-def get_user_conversations(user_id: int, db: Session = Depends(get_db)):
+def get_user_conversations(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """获取用户的所有对话"""
     try:
-        conversations = DatabaseService.get_user_conversations(user_id, db)
+        ensure_legacy_user_matches(user_id, current_user)
+        conversations = DatabaseService.get_user_conversations(current_user.id, db)
         
         conversation_responses = []
         for conv in conversations:
@@ -82,6 +90,8 @@ def get_user_conversations(user_id: int, db: Session = Depends(get_db)):
         
         return schemas.ConversationListResponse(conversations=conversation_responses)
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"获取用户对话失败: {str(e)}")
         raise HTTPException(
@@ -90,11 +100,19 @@ def get_user_conversations(user_id: int, db: Session = Depends(get_db)):
         )
 
 @router.get("/{conversation_id}/messages", response_model=schemas.ChatHistoryResponse)
-def get_conversation_messages(conversation_id: int, user_id: int, db: Session = Depends(get_db)):
+def get_conversation_messages(
+    conversation_id: int,
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """获取指定对话的聊天历史"""
     try:
         # 验证对话是否存在且属于该用户
-        conversation = DatabaseService.get_conversation_by_id(conversation_id, user_id, db)
+        ensure_legacy_user_matches(user_id, current_user)
+        conversation = DatabaseService.get_conversation_by_id(
+            conversation_id, current_user.id, db
+        )
         if not conversation:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -130,6 +148,7 @@ def rename_conversation(
     conversation_id: int,
     conversation: schemas.ConversationUpdate,
     db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """重命名属于当前用户的对话。"""
     title = conversation.title.strip()
@@ -138,8 +157,9 @@ def rename_conversation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="对话标题不能为空",
         )
+    ensure_legacy_user_matches(conversation.user_id, current_user)
     success = DatabaseService.update_conversation_title(
-        conversation_id, conversation.user_id, title[:100], db
+        conversation_id, current_user.id, title[:100], db
     )
     if not success:
         raise HTTPException(
@@ -149,10 +169,18 @@ def rename_conversation(
     return {"message": "对话重命名成功", "title": title[:100]}
 
 @router.delete("/{conversation_id}")
-def delete_conversation(conversation_id: int, user_id: int, db: Session = Depends(get_db)):
+def delete_conversation(
+    conversation_id: int,
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """删除对话"""
     try:
-        success = DatabaseService.delete_conversation(conversation_id, user_id, db)
+        ensure_legacy_user_matches(user_id, current_user)
+        success = DatabaseService.delete_conversation(
+            conversation_id, current_user.id, db
+        )
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

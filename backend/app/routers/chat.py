@@ -6,6 +6,11 @@ from .. import schemas
 from ..database import SessionLocal
 from ..services.llm_service import llm_controller
 from ..services.database_service import DatabaseService
+from ..security import (
+    AuthenticatedUser,
+    ensure_legacy_user_matches,
+    get_current_user,
+)
 import json
 import asyncio
 import time
@@ -19,15 +24,20 @@ def get_db():
         db.close()
 
 @router.post("/stream")
-def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)):
+def chat_stream_endpoint(
+    req: schemas.ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     """
     流式聊天接口
     """
     try:
-        # 验证对话是否存在且属于该用户
+        ensure_legacy_user_matches(req.user_id, current_user)
+        # 验证对话是否存在且属于令牌对应用户
         conversation = DatabaseService.get_conversation_by_id(
-            req.conversation_id, 
-            req.user_id, 
+            req.conversation_id,
+            current_user.id,
             db
         )
         if not conversation:
@@ -42,10 +52,8 @@ def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)
         if not chat_history and conversation.title == "新对话":
             auto_title = req.message.strip()[:10] or "新对话"
             DatabaseService.update_conversation_title(
-                req.conversation_id, req.user_id, auto_title, db
+                req.conversation_id, current_user.id, auto_title, db
             )
-        print("req.use_wiki"+"="*20)
-        print(req.use_wiki)
         # 构建LLM控制器需要的payload
         payload = {
             "message": req.message,
@@ -67,7 +75,7 @@ def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)
             try:
                 # 调用LLM控制器进行流式处理
                 full_response = ""
-                for chunk in llm_controller.process_message(payload, req.user_id, db):
+                for chunk in llm_controller.process_message(payload, current_user.id, db):
                     if chunk.startswith('<think>'):
                         chunk = chunk.replace('<think>', '='*20 + ' AI思考中🤔 ' )
                     if chunk.endswith('</think>'):
@@ -95,6 +103,8 @@ def chat_stream_endpoint(req: schemas.ChatRequest, db: Session = Depends(get_db)
         
         return StreamingResponse(generate(), media_type="text/plain")
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"流式聊天接口错误: {str(e)}")
         raise HTTPException(status_code=500, detail=f"流式聊天处理失败: {str(e)}")

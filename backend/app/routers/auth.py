@@ -2,15 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from passlib.context import CryptContext
+import bcrypt
 from .. import schemas
 from ..database import SessionLocal
 from ..services.database_service import DatabaseService
+from ..security import create_access_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-# 密码加密上下文
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def get_db():
     db = SessionLocal()
@@ -20,10 +18,22 @@ def get_db():
         db.close()
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except (TypeError, ValueError):
+        return False
 
 def get_password_hash(password):
-    return pwd_context.hash(password)
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="密码长度不能超过 72 个 UTF-8 字节",
+        )
+    return bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12)).decode("utf-8")
 
 @router.post("/register", response_model=schemas.UserResponse)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -60,7 +70,7 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
             detail="注册失败"
         )
 
-@router.post("/login", response_model=schemas.UserResponse)
+@router.post("/login", response_model=schemas.AuthResponse)
 def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     """
     用户登录接口
@@ -83,7 +93,12 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
-        return {"user_id": db_user.id, "username": db_user.username}
+        return {
+            "user_id": db_user.id,
+            "username": db_user.username,
+            "access_token": create_access_token(db_user.id, db_user.username),
+            "token_type": "bearer",
+        }
         
     except HTTPException:
         raise

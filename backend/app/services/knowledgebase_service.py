@@ -8,7 +8,7 @@
 
 import os
 import shutil
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 from langchain_core.documents import Document
@@ -240,12 +240,18 @@ class KnowledgeBaseService:
             for kb in knowledge_bases:
                 print(f"检索知识库: {kb.name}")
                 if kb.vector_db_path and os.path.exists(kb.vector_db_path):
-                    results = self._search_knowledge_base(message, kb.vector_db_path, kb.embedding_model, top_k)
-                    all_results.extend(results)
+                    search_response = self.search_knowledge_base(
+                        message,
+                        kb.vector_db_path,
+                        kb.embedding_model,
+                        top_k,
+                    )
+                    for result in search_response["results"]:
+                        result["knowledge_base"] = kb.name
+                    all_results.extend(search_response["results"])
             
             # 按相似度排序并取前top_k个
-            all_results.sort(key=lambda x: x[1], reverse=True)
-            print(f"排序后的结果: {all_results}")   
+            all_results.sort(key=lambda item: item["score"], reverse=True)
             top_results = all_results[:top_k]
             
             if not top_results:
@@ -253,8 +259,9 @@ class KnowledgeBaseService:
             
             # 生成上下文
             context_parts = []
-            for content, score in top_results:
-                context_parts.append(content)
+            for result in top_results:
+                source = result.get("source") or result.get("knowledge_base") or "知识库"
+                context_parts.append(f"[来源: {source}]\n{result['content']}")
             
             context = "\n".join(context_parts)
             print(f"RAG检索到 {len(top_results)} 条相关文档")
@@ -324,8 +331,15 @@ class KnowledgeBaseService:
             print(f"添加文档到向量数据库失败: {str(e)}")
         return False
     
-    def _search_knowledge_base(self, query: str, vector_db_path: str, embedding_model: str, top_k: int) -> List[Tuple[str, float]]:
-        """从指定知识库中检索相关文档"""
+    def search_knowledge_base(
+        self,
+        query: str,
+        vector_db_path: str,
+        embedding_model: str,
+        top_k: int,
+        min_score: float | None = None,
+    ) -> Dict[str, Any]:
+        """检索知识库并返回经过动态阈值过滤的结构化引用结果。"""
         try:
             embeddings = OllamaEmbeddings(
                 model=embedding_model,
@@ -335,15 +349,60 @@ class KnowledgeBaseService:
                 persist_directory=vector_db_path,
                 embedding_function=embeddings
             )
-            # 直接返回最相关的 top_k 条结果。旧实现使用固定 0.8 阈值，
-            # 即便完全可用也经常把中文检索结果全部过滤掉。
-            docs_with_scores = vectorstore.similarity_search_with_relevance_scores(
-                query, k=top_k
+            candidate_k = min(
+                max(top_k, top_k * settings.SEARCH_CANDIDATE_MULTIPLIER),
+                50,
             )
-            return [
-                (doc.page_content, float(score))
-                for doc, score in docs_with_scores
-            ]
+            docs_with_scores = vectorstore.similarity_search_with_relevance_scores(
+                query, k=candidate_k
+            )
+            if not docs_with_scores:
+                return {"threshold": None, "results": []}
+
+            best_score = float(docs_with_scores[0][1])
+            floor = settings.SEARCH_MIN_SCORE if min_score is None else min_score
+            threshold = max(floor, best_score - settings.SEARCH_SCORE_MARGIN)
+
+            results = []
+            for doc, raw_score in docs_with_scores:
+                score = float(raw_score)
+                if score < threshold:
+                    continue
+
+                metadata = doc.metadata or {}
+                raw_source = metadata.get("source") or metadata.get("file_name")
+                source = os.path.basename(str(raw_source)) if raw_source else None
+
+                page = metadata.get("page_number")
+                if page is not None:
+                    try:
+                        page = int(page)
+                    except (TypeError, ValueError):
+                        page = None
+                if page is None and metadata.get("page") is not None:
+                    try:
+                        page = int(metadata["page"]) + 1
+                    except (TypeError, ValueError):
+                        page = None
+
+                section = (
+                    metadata.get("section")
+                    or metadata.get("title")
+                    or metadata.get("heading")
+                )
+                results.append(
+                    {
+                        "content": doc.page_content,
+                        "score": score,
+                        "source": source,
+                        "page": page,
+                        "section": str(section) if section else None,
+                    }
+                )
+                if len(results) >= top_k:
+                    break
+
+            return {"threshold": threshold, "results": results}
         except Exception as e:
             error_text = str(e).strip() or repr(e)
             raise RuntimeError(
@@ -537,11 +596,11 @@ class KnowledgeBaseService:
                     # 使用文件名作为过滤条件删除向量数据
                     success = self._delete_vectors_from_chroma(knowledge_base.vector_db_path, knowledge_file.original_filename)
                     if success:
-                        print(f"✅ 已从ChromaDB中删除文件 '{knowledge_file.original_filename}' 的向量数据")
+                        print(f"[OK] 已从ChromaDB中删除文件 '{knowledge_file.original_filename}' 的向量数据")
                     else:
-                        print(f"❌ 从ChromaDB删除文件 '{knowledge_file.original_filename}' 的向量数据失败")
+                        print(f"[ERROR] 从ChromaDB删除文件 '{knowledge_file.original_filename}' 的向量数据失败")
                 else:
-                    print(f"⚠️ 向量数据库路径不存在: {knowledge_base.vector_db_path}")
+                    print(f"[WARN] 向量数据库路径不存在: {knowledge_base.vector_db_path}")
             except Exception as e:
                 print(f"从ChromaDB删除向量数据时出错: {str(e)}")
                 import traceback
@@ -602,16 +661,16 @@ class KnowledgeBaseService:
         try:
             # 如果启用Wiki知识，优先使用Wiki知识库
             if use_wiki:
-                print("🔍 使用Wiki知识库进行RAG")
+                print("[SEARCH] 使用Wiki知识库进行RAG")
                 
-                # 使用已经初始化的wiki服务
-                if hasattr(self.rag_chain_service, 'wiki_kb') and self.rag_chain_service.wiki_kb:
-                    wiki_service = self.rag_chain_service.wiki_kb.wiki_service
+                wiki_kb = self.rag_chain_service.get_wiki_knowledge_base()
+                if wiki_kb:
+                    wiki_service = wiki_kb.wiki_service
                     
                     # 检查Wiki数据库是否可用
                     stats = wiki_service.get_database_stats()
                     if stats.get("service_type") in ["online", "offline"]:
-                        print(f"✅ Wiki数据库可用，模式: {wiki_service.mode}")
+                        print(f"[OK] Wiki数据库可用，模式: {wiki_service.mode}")
                         if stats.get("service_type") == "offline":
                             print(f"   包含 {stats['stats']['total_articles']} 篇文章")
                         # 使用Wiki知识库创建RAG Chain
@@ -624,9 +683,9 @@ class KnowledgeBaseService:
                             score_threshold=score_threshold
                         )
                     else:
-                        print("⚠️ Wiki数据库不可用，回退到用户知识库")
+                        print("[WARN] Wiki数据库不可用，回退到用户知识库")
                 else:
-                    print("⚠️ Wiki服务未初始化，回退到用户知识库")
+                    print("[WARN] Wiki服务未初始化，回退到用户知识库")
             
             # 获取用户的第一个知识库（简化处理，实际可以支持多知识库）
             knowledge_bases = DatabaseService.get_user_knowledge_bases(user_id, db)

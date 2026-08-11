@@ -1,0 +1,263 @@
+:root {
+    --os-bg: #f4f6f8;
+    --os-panel: #ffffff;
+    --os-text: #172033;
+    --os-muted: #657086;
+    --os-border: #e3e7ee;
+    --os-primary: #27364f;
+    --os-primary-hover: #1d293d;
+    --os-danger: #b42318;
+    --os-radius: 16px;
+    --os-shadow: 0 14px 42px rgba(24, 34, 52, 0.08);
+}
+
+html,
+body {
+    background: var(--os-bg) !important;
+}
+
+.gradio-container {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    min-height: 100vh !important;
+    margin: 0 !important;
+    padding: 18px clamp(14px, 2.4vw, 34px) 28px !important;
+    overflow-x: hidden !important;
+    color: var(--os-text) !important;
+}
+
+.top-nav {
+    position: sticky !important;
+    top: 12px !important;
+    z-index: 20 !important;
+    width: min(920px, 100%) !important;
+    min-width: 0 !important;
+    margin: 0 auto 20px !important;
+    padding: 6px !important;
+    gap: 4px !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 15px !important;
+    background: rgba(30, 41, 59, 0.96) !important;
+    box-shadow: 0 12px 32px rgba(23, 32, 51, 0.18) !important;
+    backdrop-filter: blur(12px) !important;
+}
+
+.nav-btn {
+    flex: 1 0 118px !important;
+    min-width: 118px !important;
+    height: 42px !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+}
+
+.welcome-page,
+.search-wrap,
+.main-chat-area,
+.sidebar {
+    min-width: 0 !important;
+}
+
+.welcome-page {
+    width: min(1080px, 100%) !important;
+    min-height: 0 !important;
+    margin: 0 auto !important;
+    padding: clamp(24px, 4vw, 48px) !important;
+    border: 1px solid var(--os-border) !important;
+    border-radius: 24px !important;
+    background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%) !important;
+    box-shadow: var(--os-shadow) !important;
+}
+
+.dashboard-copy h1 {
+    margin-bottom: 8px !important;
+    font-size: clamp(30px, 4vw, 48px) !important;
+    letter-spacing: -0.04em !important;
+}
+
+.dashboard-copy h3 {
+    margin-top: 28px !important;
+    color: var(--os-text) !important;
+}
+
+.dashboard-copy ul {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    padding: 0 !important;
+    list-style: none !important;
+}
+
+.dashboard-copy li {
+    padding: 13px 15px !important;
+    border: 1px solid var(--os-border) !important;
+    border-radius: 12px !important;
+    background: var(--os-panel) !important;
+    color: var(--os-muted) !important;
+}
+
+.quick-actions {
+    margin-top: 18px !important;
+    gap: 10px !important;
+}
+
+.quick-actions button {
+    min-height: 46px !important;
+    border-radius: 12px !important;
+}
+
+.search-wrap {
+    width: min(980px, 100%) !important;
+    margin: 0 auto !important;
+    padding: clamp(20px, 3vw, 34px) !important;
+    border: 1px solid var(--os-border) !important;
+    border-radius: var(--os-radius) !important;
+    background: var(--os-panel) !important;
+    box-shadow: var(--os-shadow) !important;
+}
+
+.search-result {
+    margin-top: 18px !important;
+    padding: clamp(16px, 2.5vw, 26px) !important;
+    border: 1px solid var(--os-border) !important;
+    border-radius: 14px !important;
+    background: #fbfcfe !important;
+}
+
+.sidebar {
+    width: min(1120px, 100%) !important;
+    max-width: 1120px !important;
+    margin: 0 auto !important;
+}
+
+.main-chat-area {
+    width: min(1120px, 100%) !important;
+    max-width: 1120px !important;
+    margin: 0 auto !important;
+    padding: clamp(14px, 2vw, 22px) !important;
+    border: 1px solid var(--os-border) !important;
+    border-radius: var(--os-radius) !important;
+    background: var(--os-panel) !important;
+    box-shadow: var(--os-shadow) !important;
+}
+
+.chat-statusbar {
+    margin-bottom: 10px !important;
+    padding: 9px 13px !important;
+    border: 1px solid #dce3ed !important;
+    border-radius: 10px !important;
+    background: #f6f8fb !important;
+    color: #526077 !important;
+    font-size: 13px !important;
+}
+
+.chat-statusbar p {
+    margin: 0 !important;
+}
+
+.conversation-actions {
+    margin-top: 8px !important;
+    gap: 8px !important;
+}
+
+.kb-grid .wrap {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+}
+
+.kb-grid label {
+    min-width: 0 !important;
+}
+
+.modal-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 1000 !important;
+    width: 100vw !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    min-height: 100vh !important;
+    margin: 0 !important;
+    padding: 20px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(15, 23, 42, 0.48) !important;
+    backdrop-filter: blur(4px) !important;
+}
+
+.modal-card {
+    width: min(460px, calc(100vw - 32px)) !important;
+    min-width: 0 !important;
+    margin: auto !important;
+    padding: 22px !important;
+    border: 1px solid rgba(255, 255, 255, 0.55) !important;
+    border-radius: 18px !important;
+    background: var(--os-panel) !important;
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.25) !important;
+}
+
+.logout-btn {
+    width: min(180px, calc(100% - 28px)) !important;
+    margin: 18px auto 0 !important;
+}
+
+@media (max-width: 1024px) {
+    .gradio-container {
+        padding-inline: 16px !important;
+    }
+
+    .kb-grid .wrap {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .sidebar,
+    .main-chat-area {
+        width: 100% !important;
+    }
+}
+
+@media (max-width: 640px) {
+    .gradio-container {
+        padding: 10px 10px 22px !important;
+    }
+
+    .top-nav {
+        top: 6px !important;
+        justify-content: flex-start !important;
+    }
+
+    .nav-btn {
+        flex-basis: 96px !important;
+        min-width: 96px !important;
+        font-size: 13px !important;
+    }
+
+    .welcome-page,
+    .search-wrap,
+    .main-chat-area {
+        padding: 16px !important;
+        border-radius: 16px !important;
+    }
+
+    .dashboard-copy ul,
+    .kb-grid .wrap {
+        grid-template-columns: 1fr !important;
+    }
+
+    .quick-actions,
+    .conversation-actions,
+    .kb-toolbar {
+        flex-direction: column !important;
+    }
+
+    .chatbot {
+        min-height: 420px !important;
+    }
+
+    .modal-overlay {
+        padding: 12px !important;
+    }
+}

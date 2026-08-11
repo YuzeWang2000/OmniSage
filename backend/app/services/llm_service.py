@@ -294,7 +294,7 @@ class LLMController:
         try:
             # 如果启用了Wiki知识，优先使用RAG模式
             if use_wiki and not use_rag:
-                print("🔍 检测到Wiki知识请求，自动启用RAG模式")
+                print("[SEARCH] 检测到Wiki知识请求，自动启用RAG模式")
                 use_rag = True
             
             if use_rag:
