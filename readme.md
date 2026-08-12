@@ -1,303 +1,122 @@
-# OmniSage - 智能知识库问答系统
+# OmniSage
 
-OmniSage 是一个基于 FastAPI 和 Gradio 构建的智能知识库问答系统，支持文档上传、知识库管理和智能问答功能。
+OmniSage 是一个以 FastAPI 为唯一业务后端、React 为 Web 客户端的 RAG 智能问答与知识工作台。它提供认证、会话、流式问答、知识库、文档索引、Wiki/知识库搜索和在线模型 API Key 管理。
 
-## 功能特性
+## 架构
 
-- 📚 **知识库管理**: 支持多种文档格式上传和管理
-- 🤖 **智能问答**: 基于 RAG (Retrieval-Augmented Generation) 的智能问答
-- 🌐 **Wiki 集成**: 支持维基百科数据导入和处理
-- 🎤 **语音识别**: 集成 Vosk 语音识别功能
-- 🔐 **用户认证**: 完整的用户注册、登录和权限管理
-- 📊 **对话历史**: 完整的对话记录和管理
-- 🎨 **现代化 UI**: 基于 Gradio 的直观用户界面
+- `backend/`：Python、FastAPI、SQLAlchemy、LangChain、ChromaDB 与模型服务集成。
+- `frontend/`：TypeScript strict、React、Vite、React Router、TanStack Query、Zustand、Tailwind CSS 与 shadcn/ui。
+- `frontend-legacy/`：迁移前的 Gradio 前端，仅保留作回退和行为参考，不是默认入口。
+- `FRONTEND_MIGRATION_PLAN.md`：旧功能审计、接口映射、保留行为与接口缺口。
 
-## 技术栈
+React 只负责展示和交互；认证、对话持久化、检索、索引、Wiki 与模型调用仍由 FastAPI 完成，没有引入 Node.js 业务后端或 Next.js。
 
-### 后端
-- **FastAPI**: 高性能 Web 框架
-- **SQLAlchemy**: ORM 数据库操作
-- **LangChain**: LLM 应用开发框架
-- **ChromaDB**: 向量数据库
-- **Sentence Transformers**: 文本嵌入模型
+## 环境要求
 
-### 前端
-- **Gradio**: 快速构建 ML 应用界面
-- **Vosk**: 离线语音识别
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/)
+- Node.js 20.19+ 或 22.12+
+- pnpm 11
+- Ollama（使用本地模型、嵌入或知识库功能时）
+- 可选：MySQL；未设置 `DATABASE_URL` 时后端使用本地 SQLite `omnisage.db`
 
-## 项目结构
-
-```
-OmniSage/
-├── backend/                 # 后端服务
-│   ├── app/                # 应用核心代码
-│   ├── scripts/            # 初始化脚本
-│   ├── chroma_db/          # 向量数据库存储
-│   ├── uploaded_files/     # 上传文件存储
-│   ├── wiki_data/          # 维基百科数据
-│   ├── pyproject.toml      # 后端依赖配置
-│   └── main.py            # 后端启动文件
-├── frontend/               # 前端服务
-│   ├── app.py             # 前端启动文件
-│   ├── pyproject.toml     # 前端依赖配置
-│   └── vosk-model-small-cn-0.22/  # 语音识别模型
-└── readme.md              # 项目说明文档
-```
-
-## 快速开始
-
-### 1. 环境准备
-
-确保已安装 Python 3.11+ 和 uv。
-确保已安装 Ollama。
-确保已安装 Mysql。
-
-#### 安装 uv
-
-```bash
-# 使用 pip 安装 uv
-pip install uv
-
-# 或者使用官方安装脚本
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-#### 安装ollama
-安装并运行ollama
-安装：gemma3n，deepseek-r1:14b
-安装：nomic-embed-text
-```bash
-ollama pull gemma3n
-ollama pull deepseek-r1:14b
-ollama pull nomic-embed-text
-```
-#### 安装mysql
-新建database， chatdb
-新建user（默认设置为用户名：gpt，密码：gpt）
-新建user，8.0.46的最短密码长度为4（默认设置为用户名：gpt，密码：1234）#
-
-### 2. 克隆项目
-
-```bash
-git clone <repository-url>
-cd OmniSage
-```
-
-### 3. 安装依赖
-
-#### 安装后端依赖
+## 启动后端
 
 ```bash
 cd backend
 uv sync
+uv run python scripts/create_tables.py
+uv run uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-#### 安装前端依赖
+启动后可访问：
+
+- 健康检查：`http://127.0.0.1:8000/health`
+- OpenAPI：`http://127.0.0.1:8000/openapi.json`
+- Swagger UI：`http://127.0.0.1:8000/docs`
+
+常用后端环境变量：
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `DATABASE_URL` | SQLAlchemy 数据库连接 | `sqlite:///./omnisage.db` |
+| `DATA_DIR` | 上传文件、向量库等数据根目录 | `.` |
+| `OLLAMA_BASE_URL` | Ollama 地址 | `http://localhost:11434` |
+| `DEFAULT_MODEL` | 默认聊天模型 | `gemma3n` |
+| `EMBEDDING_MODEL` | 默认嵌入模型 | `nomic-embed-text` |
+| `JWT_SECRET_KEY` | JWT 签名密钥；生产必须显式设置强随机值 | 本地进程临时随机值 |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Token 有效期 | `1440` |
+| `CORS_ALLOWED_ORIGINS` | 逗号分隔的允许来源 | 本地 Vite 两个来源 |
+| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | 可选全局在线模型密钥 | 未设置 |
+
+生产环境必须显式配置 `JWT_SECRET_KEY`。不要把 `.env`、Token、密码或 API Key 提交到 Git。
+
+## 启动 React 前端
 
 ```bash
 cd frontend
-uv sync
+pnpm install
+copy .env.example .env.local
+pnpm dev
 ```
 
-### 4. 初始化数据库
+浏览器访问 `http://127.0.0.1:5173`。开发环境默认使用 `/api` 并由 Vite 代理到 `http://127.0.0.1:8000`。
 
-```bash
-# 进入后端目录
-cd backend
-
-# 创建数据库表
-uv run python scripts/create_tables.py
-
-# 初始化维基百科数据（可选）
-uv run python scripts/init_wiki_data.py
-```
-
-### 5. 启动服务
-
-#### 启动后端服务
-
-```bash
-# 进入后端目录
-cd backend
-
-# 启动后端服务
-uv run uvicorn main:app --reload
-```
-
-后端服务将在 `http://localhost:8000` 启动。
-
-#### 启动前端服务
-
-```bash
-# 进入前端目录
-cd frontend
-
-# 启动前端服务
-uv run python app.py
-```
-
-前端服务将在 `http://localhost:7860` 启动。
-
-## 脚本说明
-
-### 后端脚本
-
-- `create_tables.py`: 创建数据库表结构
-- `init_wiki_data.py`: 初始化维基百科数据
-- `reset_project_data.py`: 重置项目数据（谨慎使用）
-
-### 使用示例
-
-```bash
-# 进入后端目录
-cd backend
-
-# 创建数据库表
-uv run python scripts/create_tables.py
-
-# 初始化维基百科数据
-uv run python scripts/init_wiki_data.py
-
-# 重置项目数据（会清空所有数据）
-uv run python scripts/reset_project_data.py
-```
-
-## 依赖管理
-
-本项目使用 uv 进行依赖管理，主要配置文件：
-
-- `backend/pyproject.toml`: 后端依赖配置
-- `frontend/pyproject.toml`: 前端依赖配置
-
-### 常用 uv 命令
-
-```bash
-# 安装依赖
-uv sync
-
-# 添加新依赖
-uv add package_name
-
-# 添加开发依赖
-uv add --dev package_name
-
-# 运行 Python 脚本
-uv run python script.py
-
-# 激活虚拟环境
-uv shell
-```
-
-## API 文档
-
-启动后端服务后，可以访问以下地址查看 API 文档：
-
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-## 主要功能
-
-### 1. 用户管理
-- 用户注册和登录
-- API 密钥管理
-- 用户权限控制
-
-### 2. 知识库管理
-- 文档上传（支持 PDF、TXT 等格式）
-- 知识库创建和管理
-- 文档向量化和存储
-
-### 3. 智能问答
-- 基于知识库的智能问答
-- 支持维基百科数据查询
-- 对话历史记录
-
-### 4. 语音识别
-- 离线语音识别
-- 支持中文语音输入
-
-## 配置说明
-
-### 环境变量
-
-创建 `.env` 文件配置以下环境变量：
+前端环境变量：
 
 ```env
-# 数据库配置
-DATABASE_URL=mysql+pymysql://username:password@localhost/omnissage
-
-# LLM 配置
-DEEPSEEK_API_KEY=your_deepseek_api_key
-OLLAMA_BASE_URL=http://localhost:11434
-
-# JWT 鉴权配置（生产环境必须使用足够长的随机值）
-JWT_SECRET_KEY=replace_with_a_random_secret
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-
-# 检索相关性过滤（可选）
-SEARCH_MIN_SCORE=0.35
-SEARCH_SCORE_MARGIN=0.18
+VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:8000
+VITE_REQUEST_TIMEOUT_MS=30000
+VITE_UPLOAD_TIMEOUT_MS=180000
+VITE_CHAT_TIMEOUT_MS=120000
 ```
 
-### 模型配置
+若不创建 `.env.local`，Vite 开发模式会自动使用 `/api` 代理。前后端分别部署在不同域名时，将 `VITE_API_BASE_URL` 设为浏览器可访问的绝对 API 地址，并把前端来源加入后端 `CORS_ALLOWED_ORIGINS`。生产环境与开发环境应使用独立的环境文件或构建参数。
 
-系统支持多种 LLM 模型：
+## 构建与测试
 
-- **DeepSeek**: 需要 API 密钥
-- **Ollama**: 本地部署的模型
-- **其他**: 可通过配置添加
+在 `frontend/` 中执行：
 
-## 故障排除
+```bash
+pnpm install
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+pnpm exec playwright test
+```
 
-### 常见问题
+- Vitest/React Testing Library 覆盖认证表单、401、受保护路由、会话切换、安全 Markdown、RAG/Wiki、知识库空状态、搜索结果和 API Key 掩码。
+- Playwright 覆盖登录/工作台、聊天与 SSE、停止生成、RAG/Wiki、知识库创建与上传、搜索详情、设置、退出及 390px 无横向溢出。
+- E2E 使用可控网络拦截，不调用真实外部大模型；真实后端联调仍需单独启动 FastAPI 和所需 Ollama 模型。
 
-1. **数据库连接失败**
-   - 检查数据库服务是否启动
-   - 验证数据库连接字符串
+更新 OpenAPI 类型：
 
-2. **模型加载失败**
-   - 检查模型文件是否存在
-   - 验证模型路径配置
+```bash
+pnpm generate:api
+```
 
-3. **依赖安装失败**
-   - 确保使用正确的 Python 版本（3.11+）
-   - 尝试重新运行 `uv sync`
+## Docker Compose
 
-### 日志查看
+设置 MySQL 与 JWT 环境变量后运行：
 
-后端日志位于控制台输出，前端日志在 Gradio 界面中显示。
+```bash
+docker compose up --build
+```
 
-## 开发指南
+生产前端由 Nginx 暴露在 `http://localhost:7860`，同源 `/api/` 代理到 FastAPI，并关闭聊天流的代理缓冲。Compose 会拒绝缺少 `JWT_SECRET_KEY` 的启动配置。
 
-### 添加新功能
+## 安全说明
 
-1. 在 `backend/app/routers/` 中添加新的路由
-2. 在 `backend/app/services/` 中添加业务逻辑
-3. 在 `backend/app/models/` 中添加数据模型
-4. 更新前端界面
+- 模型输出使用 `react-markdown`、`remark-gfm` 和 `rehype-sanitize`，不使用 `dangerouslySetInnerHTML`。
+- 外部链接只接受 HTTP(S)，并带 `noopener noreferrer nofollow`。
+- 上传文件在前后端都校验类型和 10MB 大小上限。
+- API Key 响应不含明文；前端只显示固定掩码。
+- 后端客户端错误使用安全通用消息，日志不记录 Token、密码、API Key、Prompt、文档正文或推理块。
 
-### 代码规范
+## 当前限制
 
-- 使用 Python 类型注解
-- 遵循 PEP 8 代码风格
-- 添加适当的注释和文档
-
-### 依赖管理最佳实践
-
-- 使用 `uv add` 添加新依赖
-- 定期运行 `uv sync` 更新依赖
-- 在 `pyproject.toml` 中明确指定版本范围
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 联系方式
-
-如有问题，请通过以下方式联系：
-
-- 提交 Issue
-- 发送邮件
-
----
-
-**注意**: 首次使用前请确保完成所有初始化步骤，特别是数据库表的创建。项目使用 uv 进行依赖管理，请确保已正确安装 uv。
+- 模型列表、嵌入、RAG 和真实聊天依赖可用的 Ollama/在线模型配置。
+- Wiki 离线模式需要预先准备 Wiki 数据。
+- 旧 Gradio 的本地 Vosk 语音输入没有对应 FastAPI 接口，因此未复制到 React 客户端；如需恢复，应先设计受控的后端转写 API。

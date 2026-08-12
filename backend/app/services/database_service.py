@@ -1,9 +1,13 @@
 # backend/app/services/database_service.py
+import logging
+
 from sqlalchemy.orm import Session
 from .. import models
 from typing import List, Dict, Optional
 from datetime import datetime
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 class DatabaseService:
     """数据库服务类，处理所有数据库操作"""
@@ -33,7 +37,7 @@ class DatabaseService:
             
             return chat_history
         except Exception as e:
-            print(f"获取聊天历史失败: {str(e)}")
+            logger.error("获取聊天历史失败")
             return []
     
     @staticmethod
@@ -59,7 +63,37 @@ class DatabaseService:
             db.commit()
             return True
         except Exception as e:
-            print(f"保存聊天历史失败: {str(e)}")
+            logger.error("保存聊天历史失败")
+            db.rollback()
+            return False
+
+    @staticmethod
+    def replace_latest_chat_response(
+        conversation_id: int,
+        message: str,
+        response: str,
+        model: str,
+        db: Session,
+    ) -> bool:
+        """重新生成时原位替换最后一轮回答，避免产生重复问题。"""
+        try:
+            latest = db.query(models.ChatHistory).filter(
+                models.ChatHistory.conversation_id == conversation_id,
+            ).order_by(models.ChatHistory.timestamp.desc()).first()
+            if not latest or latest.message != message:
+                return False
+            latest.response = response
+            latest.model = model
+            latest.timestamp = datetime.now()
+            conversation = db.query(models.Conversation).filter(
+                models.Conversation.id == conversation_id,
+            ).first()
+            if conversation:
+                conversation.updated_at = datetime.now()
+            db.commit()
+            return True
+        except Exception as e:
+            logger.error("替换聊天回答失败")
             db.rollback()
             return False
     
@@ -78,7 +112,7 @@ class DatabaseService:
             db.refresh(conversation)
             return conversation
         except Exception as e:
-            print(f"创建对话失败: {str(e)}")
+            logger.error("创建对话失败")
             db.rollback()
             return None
     
@@ -92,7 +126,7 @@ class DatabaseService:
             ).order_by(models.Conversation.updated_at.desc()).all()
             return conversations
         except Exception as e:
-            print(f"获取用户对话失败: {str(e)}")
+            logger.error("获取用户对话失败")
             return []
     
     @staticmethod
@@ -106,7 +140,7 @@ class DatabaseService:
             ).first()
             return conversation
         except Exception as e:
-            print(f"获取对话失败: {str(e)}")
+            logger.error("获取对话失败")
             return None
     
     @staticmethod
@@ -125,7 +159,7 @@ class DatabaseService:
                 return True
             return False
         except Exception as e:
-            print(f"删除对话失败: {str(e)}")
+            logger.error("删除对话失败")
             db.rollback()
             return False
     
@@ -145,7 +179,7 @@ class DatabaseService:
                 return True
             return False
         except Exception as e:
-            print(f"更新对话标题失败: {str(e)}")
+            logger.error("更新对话标题失败")
             db.rollback()
             return False
     
@@ -156,7 +190,7 @@ class DatabaseService:
             user = db.query(models.User).filter(models.User.username == username).first()
             return user
         except Exception as e:
-            print(f"获取用户失败: {str(e)}")
+            logger.error("获取用户失败")
             return None
     
     @staticmethod
@@ -172,7 +206,7 @@ class DatabaseService:
             db.refresh(user)
             return user
         except Exception as e:
-            print(f"创建用户失败: {str(e)}")
+            logger.error("创建用户失败")
             db.rollback()
             return None
     
@@ -183,7 +217,7 @@ class DatabaseService:
             user = db.query(models.User).filter(models.User.id == user_id).first()
             return user
         except Exception as e:
-            print(f"获取用户失败: {str(e)}")
+            logger.error("获取用户失败")
             return None
     
     @staticmethod
@@ -204,21 +238,27 @@ class DatabaseService:
             db.refresh(api_key_obj)
             return api_key_obj
         except Exception as e:
-            print(f"创建API密钥失败: {str(e)}")
+            logger.error("创建 API 密钥失败")
             db.rollback()
             return None
     
     @staticmethod
-    def get_user_api_keys(user_id: int, db: Session) -> List[models.UserApiKey]:
+    def get_user_api_keys(
+        user_id: int,
+        db: Session,
+        include_inactive: bool = False,
+    ) -> List[models.UserApiKey]:
         """获取用户的所有API密钥"""
         try:
-            api_keys = db.query(models.UserApiKey).filter(
+            query = db.query(models.UserApiKey).filter(
                 models.UserApiKey.user_id == user_id,
-                models.UserApiKey.is_active == True
-            ).order_by(models.UserApiKey.created_at.desc()).all()
+            )
+            if not include_inactive:
+                query = query.filter(models.UserApiKey.is_active == True)
+            api_keys = query.order_by(models.UserApiKey.created_at.desc()).all()
             return api_keys
         except Exception as e:
-            print(f"获取用户API密钥失败: {str(e)}")
+            logger.error("获取用户 API 密钥失败")
             return []
     
     @staticmethod
@@ -232,7 +272,7 @@ class DatabaseService:
             ).first()
             return api_key
         except Exception as e:
-            print(f"获取用户API密钥失败: {str(e)}")
+            logger.error("获取用户 API 密钥失败")
             return None
     
     @staticmethod
@@ -245,7 +285,7 @@ class DatabaseService:
             ).first()
             return api_key
         except Exception as e:
-            print(f"获取API密钥失败: {str(e)}")
+            logger.error("获取 API 密钥失败")
             return None
     
     @staticmethod
@@ -267,7 +307,7 @@ class DatabaseService:
                 return api_key_obj
             return None
         except Exception as e:
-            print(f"更新API密钥失败: {str(e)}")
+            logger.error("更新 API 密钥失败")
             db.rollback()
             return None
     
@@ -285,7 +325,7 @@ class DatabaseService:
                 return True
             return False
         except Exception as e:
-            print(f"删除API密钥失败: {str(e)}")
+            logger.error("删除 API 密钥失败")
             db.rollback()
             return False
 
@@ -313,7 +353,7 @@ class DatabaseService:
             db.refresh(knowledge_base)
             return knowledge_base
         except Exception as e:
-            print(f"创建知识库失败: {str(e)}")
+            logger.error("创建知识库失败")
             db.rollback()
             return None
     
@@ -328,7 +368,7 @@ class DatabaseService:
             ).first()
             return knowledge_base
         except Exception as e:
-            print(f"获取知识库失败: {str(e)}")
+            logger.error("获取知识库失败")
             return None
     
     @staticmethod
@@ -342,7 +382,7 @@ class DatabaseService:
             ).first()
             return knowledge_base
         except Exception as e:
-            print(f"获取知识库失败: {str(e)}")
+            logger.error("获取知识库失败")
             return None
     
     @staticmethod
@@ -357,9 +397,7 @@ class DatabaseService:
             print(f"查询到 {len(knowledge_bases)} 个知识库")
             return knowledge_bases
         except Exception as e:
-            print(f"获取用户知识库失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.error("获取用户知识库失败")
             return []
     
     @staticmethod
@@ -372,7 +410,7 @@ class DatabaseService:
             ).all()
             return knowledge_bases
         except Exception as e:
-            print(f"获取用户活跃知识库失败: {str(e)}")
+            logger.error("获取用户活跃知识库失败")
             return []
     
     @staticmethod
@@ -391,7 +429,7 @@ class DatabaseService:
                 return True
             return False
         except Exception as e:
-            print(f"删除知识库失败: {str(e)}")
+            logger.error("删除知识库失败")
             db.rollback()
             return False
     
@@ -418,7 +456,7 @@ class DatabaseService:
             db.refresh(knowledge_file)
             return knowledge_file
         except Exception as e:
-            print(f"创建知识库文件记录失败: {str(e)}")
+            logger.error("创建知识库文件记录失败")
             db.rollback()
             return None
     
@@ -433,7 +471,7 @@ class DatabaseService:
             ).first()
             return knowledge_file
         except Exception as e:
-            print(f"获取知识库文件失败: {str(e)}")
+            logger.error("获取知识库文件失败")
             return None
     
     @staticmethod
@@ -446,7 +484,7 @@ class DatabaseService:
             ).order_by(models.KnowledgeFile.created_at.desc()).all()
             return files
         except Exception as e:
-            print(f"获取知识库文件列表失败: {str(e)}")
+            logger.error("获取知识库文件列表失败")
             return []
     
     @staticmethod
@@ -465,7 +503,7 @@ class DatabaseService:
                 return True
             return False
         except Exception as e:
-            print(f"删除知识库文件失败: {str(e)}")
+            logger.error("删除知识库文件失败")
             db.rollback()
             return False
     
@@ -496,6 +534,6 @@ class DatabaseService:
                 return True
             return False
         except Exception as e:
-            print(f"更新知识库统计信息失败: {str(e)}")
+            logger.error("更新知识库统计信息失败")
             db.rollback()
             return False 

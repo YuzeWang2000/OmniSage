@@ -4,7 +4,11 @@
 **/__pycache__
 **/*.pyc
 **/.env
-frontend/vosk-model-small-cn-0.22.zip
+frontend-legacy/vosk-model-small-cn-0.22.zip
+**/node_modules
+**/dist
+**/playwright-report
+**/test-results
 backend/chroma_db
 backend/uploaded_files
 backend/wiki_data

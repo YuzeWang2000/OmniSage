@@ -1,5 +1,7 @@
 # backend/app/routers/conversation.py
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from .. import schemas
 from ..database import SessionLocal
@@ -12,6 +14,7 @@ from ..security import (
 from datetime import datetime
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+logger = logging.getLogger(__name__)
 
 def get_db():
     db = SessionLocal()
@@ -56,7 +59,7 @@ def create_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"创建对话失败: {str(e)}")
+        logger.error("创建对话失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="创建对话失败"
@@ -65,6 +68,7 @@ def create_conversation(
 @router.get("/user/{user_id}", response_model=schemas.ConversationListResponse)
 def get_user_conversations(
     user_id: int,
+    limit: int | None = Query(None, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
@@ -72,6 +76,8 @@ def get_user_conversations(
     try:
         ensure_legacy_user_matches(user_id, current_user)
         conversations = DatabaseService.get_user_conversations(current_user.id, db)
+        if limit is not None:
+            conversations = conversations[:limit]
         
         conversation_responses = []
         for conv in conversations:
@@ -93,7 +99,7 @@ def get_user_conversations(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"获取用户对话失败: {str(e)}")
+        logger.error("获取用户对话失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="获取对话列表失败"
@@ -136,7 +142,7 @@ def get_conversation_messages(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"获取聊天历史失败: {str(e)}")
+        logger.error("获取聊天历史失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="获取聊天历史失败"
@@ -192,7 +198,7 @@ def delete_conversation(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"删除对话失败: {str(e)}")
+        logger.error("删除对话失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="删除对话失败"

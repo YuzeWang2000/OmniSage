@@ -1,5 +1,6 @@
 # backend/app/config.py
 import os
+import secrets
 from typing import Optional
 
 class Settings:
@@ -8,7 +9,7 @@ class Settings:
     # 数据库配置
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "mysql+pymysql://gpt:1234@localhost:3306/chatdb",
+        "sqlite:///./omnisage.db",
     )
     OLLAMA_BASE_URL: str = os.getenv(
             "OLLAMA_BASE_URL",
@@ -43,11 +44,11 @@ class Settings:
     # 模型温度配置
     DEFAULT_TEMPERATURE: float = 0.7
 
-    # 鉴权配置。生产环境必须通过环境变量覆盖默认密钥。
+    # 鉴权配置。未配置时生成仅适用于单进程本地开发的临时密钥。
     JWT_SECRET_KEY: str = (
         os.getenv("JWT_SECRET_KEY")
         or os.getenv("SECRET_KEY")  # 兼容旧版部署变量
-        or "omnisage-dev-secret-change-before-production"
+        or secrets.token_urlsafe(48)
     )
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
@@ -60,6 +61,15 @@ class Settings:
     SEARCH_CANDIDATE_MULTIPLIER: int = int(
         os.getenv("SEARCH_CANDIDATE_MULTIPLIER", "3")
     )
+
+    CORS_ALLOWED_ORIGINS: list[str] = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ALLOWED_ORIGINS",
+            "http://127.0.0.1:5173,http://localhost:5173",
+        ).split(",")
+        if origin.strip()
+    ]
 
 # 全局配置实例
 settings = Settings()

@@ -1,4 +1,6 @@
 # backend/app/services/llm_service.py
+import logging
+
 from langchain_community.chat_models import ChatOpenAI
 from langchain_ollama import ChatOllama, OllamaLLM
 
@@ -18,6 +20,7 @@ from langchain_community.document_loaders import (
 import os
 from typing import List, Dict, Any, Optional
 from ..config import settings
+logger = logging.getLogger(__name__)
 online_models = ["deepseek-chat", "deepseek-reasoner"]
 class LLMController:
     """
@@ -42,7 +45,7 @@ class LLMController:
                         embedding_function=self.embeddings
                     )
             except Exception as e:
-                print(f"向量数据库初始化失败: {str(e)}")
+                logger.error("向量数据库初始化失败")
         return self._vectorstore
     
     def get_llm(self, model_name: str, mode: str = "chat", user_id: int = None, db = None):
@@ -58,11 +61,11 @@ class LLMController:
                     user_api_key = DatabaseService.get_user_api_key_by_provider(user_id, "deepseek", db)
                     if user_api_key and user_api_key.is_active:
                         api_key = user_api_key.api_key
-                        print(f"使用用户 {user_id} 的DeepSeek API key: {api_key[:10]}...{api_key[-4:]}")
+                        print(f"使用用户 {user_id} 配置的 DeepSeek API key")
                     else:
                         print(f"用户 {user_id} 没有有效的DeepSeek API key，使用全局配置")
                 else:
-                    print(f"使用全局DeepSeek API key: {api_key[:10]}...{api_key[-4:]}")
+                    print("使用全局 DeepSeek API key 配置")
                 
                 # 在线模型
                 return ChatDeepSeek(
@@ -78,11 +81,11 @@ class LLMController:
                     user_api_key = DatabaseService.get_user_api_key_by_provider(user_id, "openai", db)
                     if user_api_key and user_api_key.is_active:
                         api_key = user_api_key.api_key
-                        print(f"使用用户 {user_id} 的OpenAI API key: {api_key[:10]}...{api_key[-4:]}")
+                        print(f"使用用户 {user_id} 配置的 OpenAI API key")
                     else:
                         print(f"用户 {user_id} 没有有效的OpenAI API key，使用全局配置")
                 else:
-                    print(f"使用全局OpenAI API key: {api_key[:10]}...{api_key[-4:]}")
+                    print("使用全局 OpenAI API key 配置")
                 
                 return ChatOpenAI(
                     model=model_name,
@@ -125,6 +128,7 @@ class LLMController:
         top_k: int = 5,
         score_threshold: float = 0.5,
         use_wiki: bool = False,  # 添加Wiki知识支持
+        knowledge_base_id: int | None = None,
         db = None
     ):
         """
@@ -159,10 +163,11 @@ class LLMController:
                 top_k=top_k,
                 score_threshold=score_threshold,
                 use_wiki=use_wiki,  # 传递Wiki参数
+                knowledge_base_id=knowledge_base_id,
                 db=db
             )
         except Exception as e:
-            print(f"创建RAG Chain失败: {str(e)}")
+            logger.error("创建 RAG Chain 失败")
             return None
     
     def create_simple_chat_chain(
@@ -192,7 +197,7 @@ class LLMController:
             from .knowledgebase_service import knowledge_base_service
             return knowledge_base_service.create_simple_chat_chain(llm)
         except Exception as e:
-            print(f"创建简单聊天Chain失败: {str(e)}")
+            logger.error("创建简单聊天 Chain 失败")
             return None
     
     def create_chat_chain(
@@ -224,7 +229,7 @@ class LLMController:
             from .knowledgebase_service import knowledge_base_service
             return knowledge_base_service.create_chat_chain(llm, prompt_name)
         except Exception as e:
-            print(f"创建聊天Chain失败: {str(e)}")
+            logger.error("创建聊天 Chain 失败")
             return None
     
     def create_generation_chain(
@@ -256,7 +261,7 @@ class LLMController:
             from .knowledgebase_service import knowledge_base_service
             return knowledge_base_service.create_generation_chain(llm, prompt_name)
         except Exception as e:
-            print(f"创建生成Chain失败: {str(e)}")
+            logger.error("创建生成 Chain 失败")
             return None
     
     def get_available_prompts(self):
@@ -278,6 +283,7 @@ class LLMController:
         mode = payload.get("mode", "chat")
         use_rag = payload.get("use_rag", False)
         use_wiki = payload.get("use_wiki", False)  # 获取Wiki参数
+        knowledge_base_id = payload.get("knowledge_base_id")
         chat_history = payload.get("chat_history", [])
         chain_type = payload.get("chain_type", "stuff")
         # 根据模式选择合适的默认prompt
@@ -288,9 +294,6 @@ class LLMController:
         use_reranker = payload.get("use_reranker", True)
         top_k = payload.get("top_k", 5)
         score_threshold = payload.get("score_threshold", 0.5)
-        print("=" * 20, "处理消息", "=" * 20)
-        print(payload)
-        print("=" * 20, "处理消息", "=" * 20)
         try:
             # 如果启用了Wiki知识，优先使用RAG模式
             if use_wiki and not use_rag:
@@ -310,6 +313,7 @@ class LLMController:
                         top_k=top_k,
                         score_threshold=score_threshold,
                         use_wiki=use_wiki,  # 传递Wiki参数
+                        knowledge_base_id=knowledge_base_id,
                         db=db
                     )
                 else:
@@ -323,6 +327,7 @@ class LLMController:
                         top_k=top_k,
                         score_threshold=score_threshold,
                         use_wiki=use_wiki,  # 传递Wiki参数
+                        knowledge_base_id=knowledge_base_id,
                         db=db
                     )
                 # rag_test = True
@@ -406,7 +411,6 @@ class LLMController:
                         db=db
                     )
                     print("=" * 20, "此处显示生成的Chain", "=" * 20)
-                    print(generation_chain)
                     print("=" * 20, "此处显示生成的Chain", "=" * 20)
                     
                     if generation_chain:
@@ -419,7 +423,6 @@ class LLMController:
                                     # 处理推理内容
                                     if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs.get("reasoning_content"):
                                         print("=" * 20, "处理推理内容", "=" * 20)
-                                        print(chunk)
                                         print("=" * 20, "处理推理内容", "=" * 20)
                                         reasoning_content = chunk.additional_kwargs["reasoning_content"]
                                         if not in_reasoning:

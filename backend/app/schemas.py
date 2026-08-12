@@ -1,5 +1,5 @@
 # backend/app/schemas.py
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -28,7 +28,10 @@ class ChatRequest(BaseModel):
     mode: str = "chat"
     use_rag: bool = False
     use_wiki: bool = False  # 添加Wiki知识支持
+    # 未传时继续使用旧版的“第一个知识库”行为。
+    knowledge_base_id: Optional[int] = None
     stream: bool = True
+    regenerate: bool = False
     # Chain相关参数
     chain_type: str = "stuff"
     prompt_name: str = "chat_default"
@@ -154,5 +157,20 @@ class KnowledgeBaseSearchResponse(BaseModel):
     knowledge_base_name: str
     threshold: Optional[float] = None
     results: List[KnowledgeBaseSearchResult]
+
+
+class WikiSearchResult(BaseModel):
+    title: str
+    content: str
+    url: Optional[str] = None
+    categories: List[str] = Field(default_factory=list)
+    score: float = 0
+    source: str
+
+
+class WikiSearchResponse(BaseModel):
+    query: str
+    mode: str
+    results: List[WikiSearchResult]
 
 

@@ -1,0 +1,7 @@
+nodeLinker: hoisted
+confirmModulesPurge: false
+pmOnFail: ignore
+storeDir: ../.pnpm-store
+
+allowBuilds:
+  esbuild: true

@@ -1,4 +1,6 @@
 # backend/app/routers/auth.py
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -6,9 +8,10 @@ import bcrypt
 from .. import schemas
 from ..database import SessionLocal
 from ..services.database_service import DatabaseService
-from ..security import create_access_token
+from ..security import AuthenticatedUser, create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 def get_db():
     db = SessionLocal()
@@ -63,8 +66,8 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
         
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"注册失败: {str(e)}")
+    except Exception:
+        logger.error("注册失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="注册失败"
@@ -102,9 +105,20 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
         
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"登录失败: {str(e)}")
+    except Exception:
+        logger.error("登录失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="登录失败"
         )
+
+
+@router.get("/me", response_model=schemas.UserResponse)
+def get_me(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """返回 Bearer Token 对应的当前用户，用于客户端恢复登录状态。"""
+    return {
+        "user_id": current_user.id,
+        "username": current_user.username,
+    }

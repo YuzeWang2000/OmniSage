@@ -6,6 +6,7 @@
 # rag链：使用向量数据库和LLM获得检索链
 # 检索：根据query检索知识库，使用检索的结果完善rag链，返回rag链的推理结果
 
+import logging
 import os
 import shutil
 from typing import List, Dict, Any, Optional
@@ -28,6 +29,9 @@ from ..config import settings
 from ..models import User, KnowledgeBase, KnowledgeFile
 from .database_service import DatabaseService
 from .rag_chain_service import OptimizedRAGChainService
+
+SUPPORTED_FILE_EXTENSIONS = {"pdf", "txt", "md", "doc", "docx"}
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeBaseService:
@@ -103,7 +107,7 @@ class KnowledgeBaseService:
         except Exception as e:
             return {
                 "success": False,
-                "message": f"创建知识库失败: {str(e)}"
+                "message": "创建知识库失败"
             }
     
     def upload_file_to_knowledge_base(self, knowledge_base_id: int, user_id: int, 
@@ -130,36 +134,50 @@ class KnowledgeBaseService:
                     "message": "知识库不存在或无权限访问"
                 }
             
-            # 检查文件大小
+            # UploadFile.size 可提前拒绝，但写盘时仍会执行硬上限校验。
             if hasattr(file, 'size') and file.size and file.size > settings.MAX_FILE_SIZE:
                 return {
                     "success": False,
-                    "message": f"文件大小超过限制 ({settings.MAX_FILE_SIZE / 1024 / 1024}MB)"
+                    "message": f"文件大小超过限制 ({settings.MAX_FILE_SIZE / 1024 / 1024:g}MB)"
                 }
             
             # 生成文件名和路径
-            original_filename = file.filename
-            print(f"上传文件: {original_filename}, 大小: {file.size if hasattr(file, 'size') else '未知'}")
-            if original_filename and '/' in original_filename:
-                actual_filename = os.path.basename(original_filename)
-            else:
-                actual_filename = original_filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_extension = actual_filename.split('.')[-1].lower() if '.' in actual_filename else 'txt'
+            original_filename = (file.filename or "").strip()
+            actual_filename = os.path.basename(original_filename.replace("\\", "/"))
+            if not actual_filename:
+                return {"success": False, "message": "文件名不能为空"}
+            file_extension = os.path.splitext(actual_filename)[1].lower().lstrip(".")
+            if file_extension not in SUPPORTED_FILE_EXTENSIONS:
+                supported = ", ".join(sorted(SUPPORTED_FILE_EXTENSIONS))
+                return {
+                    "success": False,
+                    "message": f"不支持的文件类型，仅支持: {supported}",
+                }
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             unique_filename = f"{timestamp}_{actual_filename}"
             
             # 保存文件
             kb_upload_dir = os.path.join(self.base_upload_dir, f"user_{user_id}", f"kb_{knowledge_base.name}")
             file_path = os.path.join(kb_upload_dir, unique_filename)
             
-            with open(file_path, "wb") as f:
-                shutil.copyfileobj(file.file, f)
+            total_size = 0
+            with open(file_path, "wb") as destination:
+                while chunk := file.file.read(1024 * 1024):
+                    total_size += len(chunk)
+                    if total_size > settings.MAX_FILE_SIZE:
+                        destination.close()
+                        os.remove(file_path)
+                        return {
+                            "success": False,
+                            "message": f"文件大小超过限制 ({settings.MAX_FILE_SIZE / 1024 / 1024:g}MB)",
+                        }
+                    destination.write(chunk)
             
             # 处理文档
             documents = self._process_document(file_path, file_extension)
             print(f"处理后的文档数量: {len(documents)}")
-            print(f"文档内容示例: {documents[0].page_content[:100] if documents else '无内容'}")
             if not documents:
+                os.remove(file_path)
                 return {
                     "success": False,
                     "message": "文档处理失败: 未能提取有效内容"
@@ -168,6 +186,7 @@ class KnowledgeBaseService:
             # 添加到向量数据库
             success = self._add_documents_to_vectorstore(documents, knowledge_base.vector_db_path, knowledge_base.embedding_model)
             if not success:
+                os.remove(file_path)
                 return {
                     "success": False,
                     "message": "向量化处理失败"
@@ -197,6 +216,7 @@ class KnowledgeBaseService:
                     "file_id": knowledge_file.id
                 }
             else:
+                os.remove(file_path)
                 return {
                     "success": False,
                     "message": "文件记录保存失败"
@@ -209,10 +229,8 @@ class KnowledgeBaseService:
                     os.remove(file_path)
                 except:
                     pass
-            return {
-                "success": False,
-                "message": f"文件上传失败: {str(e)}"
-            }
+            logger.error("文件上传或索引失败")
+            return {"success": False, "message": "文件上传或索引失败"}
     
     def get_rag_context(self, user_id: int, message: str, top_k: int = 3, db: Session = None) -> str:
         """
@@ -269,7 +287,7 @@ class KnowledgeBaseService:
             return f"\n\n相关文档信息：\n{context}\n\n基于以上信息回答："
             
         except Exception as e:
-            print(f"RAG上下文生成失败: {str(e)}")
+            logger.error("RAG 上下文生成失败")
             return ""
     
     def _process_document(self, file_path: str, file_type: str) -> List[Document]:
@@ -280,19 +298,19 @@ class KnowledgeBaseService:
                 try:
                     loader = TextLoader(file_path, encoding="utf-8")
                 except Exception as e:
-                    print(f"TextLoader 加载失败: {str(e)}")
+                    logger.warning("TextLoader 加载失败，使用通用加载器")
                     loader = UnstructuredFileLoader(file_path)
             elif file_type == 'pdf':
                 try:
                     loader = PyPDFLoader(file_path)
                 except Exception:
-                    print("PyPDFLoader 失败,使用 UnstructuredPDFLoader")
+                    logger.warning("PyPDFLoader 失败，使用备用加载器")
                     loader = UnstructuredPDFLoader(file_path)
             elif file_type in ['docx', 'doc']:
                 try:
                     loader = Docx2txtLoader(file_path)
                 except Exception:
-                    print("Docx2txtLoader 失败,使用 UnstructuredWordDocumentLoader")
+                    logger.warning("Docx2txtLoader 失败，使用备用加载器")
                     loader = UnstructuredWordDocumentLoader(file_path)
             else:
                 loader = UnstructuredFileLoader(file_path)
@@ -308,7 +326,7 @@ class KnowledgeBaseService:
             
             return processed_documents
         except Exception as e:
-            print(f"文档处理失败: {str(e)}")
+            logger.error("文档处理失败")
             return []
     
     def _add_documents_to_vectorstore(self, documents: List[Document], vector_db_path: str, embedding_model: str) -> bool:
@@ -325,10 +343,10 @@ class KnowledgeBaseService:
             
             if documents:
                 vectorstore.add_documents(documents)
-                print(f"成功添加 {len(documents)} 条文档到向量数据库: {vector_db_path}")
+                logger.info("成功添加 %s 条文档到向量数据库", len(documents))
                 return True
         except Exception as e:
-            print(f"添加文档到向量数据库失败: {str(e)}")
+            logger.error("添加文档到向量数据库失败")
         return False
     
     def search_knowledge_base(
@@ -403,12 +421,12 @@ class KnowledgeBaseService:
                     break
 
             return {"threshold": threshold, "results": results}
-        except Exception as e:
-            error_text = str(e).strip() or repr(e)
+        except Exception:
+            logger.warning("知识库检索失败，嵌入服务不可用")
             raise RuntimeError(
                 f"知识库检索失败，无法使用嵌入模型 '{embedding_model}'。"
-                f"请确认 Ollama 服务可访问且模型已安装。原始错误: {error_text}"
-            ) from e
+                "请确认 Ollama 服务可访问且模型已安装。"
+            )
     
     def _delete_vectors_from_chroma(self, vector_db_path: str, filename: str) -> bool:
         """从ChromaDB中删除指定文件的向量数据"""
@@ -445,32 +463,28 @@ class KnowledgeBaseService:
                     # 从原始文件名中提取文件名（去掉路径）
                     original_filename = os.path.basename(filename)
                     
-                    print(f"比较: source_filename='{source_filename}' vs original_filename='{original_filename}'")
                     
                     # 检查原始文件名是否包含在source文件名中（处理时间戳前缀）
                     if original_filename in source_filename:
                         matching_ids.append(all_results['ids'][i])
-                        print(f"找到匹配文档: {source_path}")
             
             if matching_ids:
                 # 删除匹配的向量数据
                 collection.delete(ids=matching_ids)
-                print(f"从ChromaDB中删除了 {len(matching_ids)} 个向量")
+                logger.info("从 ChromaDB 中删除了 %s 个向量", len(matching_ids))
                 return True
             else:
-                print(f"在ChromaDB中未找到文件 '{filename}' 的向量数据")
+                logger.info("ChromaDB 中未找到待删除文件的向量数据")
                 return False
                 
         except Exception as e:
-            print(f"从ChromaDB删除向量数据失败: {str(e)}")
+            logger.error("从 ChromaDB 删除向量数据失败")
             return False
     
     def get_user_knowledge_bases(self, user_id: int, db: Session = None) -> List[Dict[str, Any]]:
         """获取用户的知识库列表"""
         try:
-            print(f"正在从数据库获取用户 {user_id} 的知识库...")
             knowledge_bases = DatabaseService.get_user_knowledge_bases(user_id, db)
-            print(f"从数据库获取到 {len(knowledge_bases)} 个知识库")
             
             result = []
             for kb in knowledge_bases:
@@ -489,17 +503,13 @@ class KnowledgeBaseService:
                         "updated_at": kb.updated_at
                     }
                     result.append(kb_dict)
-                except Exception as kb_error:
-                    print(f"处理知识库对象时出错: {kb_error}")
-                    print(f"知识库对象: {kb}")
+                except Exception:
+                    logger.error("处理知识库对象失败")
                     continue
             
-            print(f"成功处理 {len(result)} 个知识库")
             return result
         except Exception as e:
-            print(f"获取用户知识库列表失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.error("获取用户知识库列表失败")
             return []
     
     def get_knowledge_base_files(self, knowledge_base_id: int, user_id: int, db: Session = None) -> List[Dict[str, Any]]:
@@ -522,7 +532,7 @@ class KnowledgeBaseService:
                 })
             return result
         except Exception as e:
-            print(f"获取知识库文件列表失败: {str(e)}")
+            logger.error("获取知识库文件列表失败")
             return []
     
     def delete_knowledge_base(self, knowledge_base_id: int, user_id: int, db: Session = None) -> Dict[str, Any]:
@@ -562,7 +572,7 @@ class KnowledgeBaseService:
         except Exception as e:
             return {
                 "success": False,
-                "message": f"删除知识库失败: {str(e)}"
+                "message": "删除知识库失败"
             }
     
     def delete_file_from_knowledge_base(self, file_id: int, knowledge_base_id: int, user_id: int, db: Session = None) -> Dict[str, Any]:
@@ -591,20 +601,14 @@ class KnowledgeBaseService:
             # 从ChromaDB中删除向量数据
             try:
                 if knowledge_base.vector_db_path and os.path.exists(knowledge_base.vector_db_path):
-                    print(f"开始从ChromaDB删除文件 '{knowledge_file.original_filename}' 的向量数据...")
-                    print(f"向量数据库路径: {knowledge_base.vector_db_path}")
                     # 使用文件名作为过滤条件删除向量数据
                     success = self._delete_vectors_from_chroma(knowledge_base.vector_db_path, knowledge_file.original_filename)
-                    if success:
-                        print(f"[OK] 已从ChromaDB中删除文件 '{knowledge_file.original_filename}' 的向量数据")
-                    else:
-                        print(f"[ERROR] 从ChromaDB删除文件 '{knowledge_file.original_filename}' 的向量数据失败")
+                    if not success:
+                        logger.warning("从 ChromaDB 删除文件向量数据失败")
                 else:
-                    print(f"[WARN] 向量数据库路径不存在: {knowledge_base.vector_db_path}")
-            except Exception as e:
-                print(f"从ChromaDB删除向量数据时出错: {str(e)}")
-                import traceback
-                traceback.print_exc()
+                    logger.warning("向量数据库路径不存在")
+            except Exception:
+                logger.error("从 ChromaDB 删除向量数据时出错")
                 # 即使向量删除失败，也继续删除其他数据
             
             # 删除数据库记录
@@ -627,7 +631,7 @@ class KnowledgeBaseService:
         except Exception as e:
             return {
                 "success": False,
-                "message": f"删除文件失败: {str(e)}"
+                "message": "删除文件失败"
             }
 
 
@@ -640,6 +644,7 @@ class KnowledgeBaseService:
         top_k: int = 5,
         score_threshold: float = 0.5,
         use_wiki: bool = False,  # 添加Wiki知识支持
+        knowledge_base_id: int | None = None,
         db: Session = None
     ):
         """
@@ -687,18 +692,23 @@ class KnowledgeBaseService:
                 else:
                     print("[WARN] Wiki服务未初始化，回退到用户知识库")
             
-            # 获取用户的第一个知识库（简化处理，实际可以支持多知识库）
-            knowledge_bases = DatabaseService.get_user_knowledge_bases(user_id, db)
-            print("用户知识库:", knowledge_bases)
-            if not knowledge_bases:
-                print(f"用户 {user_id} 没有知识库")
-                return None
-            
-            # 使用第一个知识库
-            kb = knowledge_bases[0]
+            if knowledge_base_id is not None:
+                kb = DatabaseService.get_knowledge_base_by_id(
+                    knowledge_base_id,
+                    user_id,
+                    db,
+                )
+                if not kb:
+                    return None
+            else:
+                # 保持旧客户端行为：未指定时使用最近更新的第一个知识库。
+                knowledge_bases = DatabaseService.get_user_knowledge_bases(user_id, db)
+                if not knowledge_bases:
+                    logger.info("当前用户没有可用知识库")
+                    return None
+                kb = knowledge_bases[0]
             vector_db_path = kb.vector_db_path
-            print(f"使用知识库 '{kb.name}' 的向量数据库: {vector_db_path}")
-            print("用户的数据库有：", knowledge_bases)
+            logger.debug("使用已授权知识库创建 RAG Chain")
 
             # 创建RAG Chain
             rag_chain = self.rag_chain_service.create_rag_chain(
@@ -712,8 +722,8 @@ class KnowledgeBaseService:
             
             return rag_chain
             
-        except Exception as e:
-            print(f"创建RAG Chain失败: {str(e)}")
+        except Exception:
+            logger.error("创建 RAG Chain 失败")
             return None
     
     def create_simple_chat_chain(

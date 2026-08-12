@@ -12,8 +12,9 @@ from ..security import (
     get_current_user,
 )
 import json
-import asyncio
-import time
+import logging
+
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 def get_db():
@@ -45,9 +46,31 @@ def chat_stream_endpoint(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="对话不存在或无权限访问"
             )
+        if req.use_rag and req.knowledge_base_id is not None and not req.use_wiki:
+            knowledge_base = DatabaseService.get_knowledge_base_by_id(
+                req.knowledge_base_id,
+                current_user.id,
+                db,
+            )
+            if not knowledge_base:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="知识库不存在或无权限访问",
+                )
         
         # 获取聊天历史
         chat_history = DatabaseService.get_chat_history(req.conversation_id, db)
+        if req.regenerate:
+            if (
+                len(chat_history) < 2
+                or chat_history[-2].get("role") != "user"
+                or chat_history[-2].get("content") != req.message
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="只能重新生成最近一轮回答",
+                )
+            chat_history = chat_history[:-2]
         # 新建对话在首条消息发送时自动使用消息前十个字符命名。
         if not chat_history and conversation.title == "新对话":
             auto_title = req.message.strip()[:10] or "新对话"
@@ -61,6 +84,7 @@ def chat_stream_endpoint(
             "mode": req.mode,
             "use_rag": req.use_rag,
             "use_wiki": req.use_wiki,  # 添加Wiki支持
+            "knowledge_base_id": req.knowledge_base_id,
             "chat_history": chat_history,
             # Chain相关参数
             "chain_type": getattr(req, 'chain_type', 'stuff'),
@@ -76,6 +100,8 @@ def chat_stream_endpoint(
                 # 调用LLM控制器进行流式处理
                 full_response = ""
                 for chunk in llm_controller.process_message(payload, current_user.id, db):
+                    if chunk.lstrip().startswith("❌"):
+                        raise RuntimeError("LLM generation failed")
                     if chunk.startswith('<think>'):
                         chunk = chunk.replace('<think>', '='*20 + ' AI思考中🤔 ' )
                     if chunk.endswith('</think>'):
@@ -87,24 +113,45 @@ def chat_stream_endpoint(
                 if not stream:
                     yield f"data: {json.dumps({'chunk': full_response})}\n\n"
                 # 保存聊天历史到数据库
-                DatabaseService.save_chat_history(
-                    conversation_id=req.conversation_id,
-                    message=req.message,
-                    response=full_response,
-                    model=req.model,
-                    db=db
-                )
+                if req.regenerate:
+                    saved = DatabaseService.replace_latest_chat_response(
+                        conversation_id=req.conversation_id,
+                        message=req.message,
+                        response=full_response,
+                        model=req.model,
+                        db=db,
+                    )
+                else:
+                    saved = DatabaseService.save_chat_history(
+                        conversation_id=req.conversation_id,
+                        message=req.message,
+                        response=full_response,
+                        model=req.model,
+                        db=db,
+                    )
+                if not saved:
+                    raise RuntimeError("Chat history persistence failed")
                 
                 yield f"data: {json.dumps({'done': True})}\n\n"
                 
-            except Exception as e:
-                error_msg = f"❌ 流式处理失败: {str(e)}"
-                yield f"data: {json.dumps({'error': error_msg})}\n\n"
+            except GeneratorExit:
+                raise
+            except Exception:
+                logger.error("聊天流式处理失败")
+                yield f"data: {json.dumps({'error': '回答生成失败，请稍后重试'})}\n\n"
         
-        return StreamingResponse(generate(), media_type="text/plain")
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
         
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"流式聊天接口错误: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"流式聊天处理失败: {str(e)}")
+    except Exception:
+        logger.error("聊天接口初始化失败")
+        raise HTTPException(status_code=500, detail="流式聊天处理失败")

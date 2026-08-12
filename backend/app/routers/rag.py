@@ -5,7 +5,6 @@ from .. import schemas
 from ..database import SessionLocal
 from ..services.knowledgebase_service import knowledge_base_service
 from ..services.database_service import DatabaseService
-from ..services.wiki_service import WikiService, WikiKnowledgeBase
 from ..config import settings
 from ..security import (
     AuthenticatedUser,
@@ -14,36 +13,13 @@ from ..security import (
 )
 import os
 import logging
-from threading import Lock
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 logger = logging.getLogger(__name__)
 
-# Wiki 服务按需初始化，避免网络探测阻塞或破坏应用启动。
-wiki_kb = None
-_wiki_initialized = False
-_wiki_lock = Lock()
-
-
 def get_wiki_knowledge_base():
-    global wiki_kb, _wiki_initialized
-    if _wiki_initialized:
-        return wiki_kb
-
-    with _wiki_lock:
-        if _wiki_initialized:
-            return wiki_kb
-        try:
-            wiki_service = WikiService(mode="auto")
-            wiki_kb = WikiKnowledgeBase(wiki_service)
-            stats = wiki_service.get_database_stats()
-            logger.info("Wiki 服务已初始化: %s", stats.get("service_type"))
-        except Exception:
-            logger.exception("Wiki 服务初始化失败；其他服务可继续使用")
-            wiki_kb = None
-        finally:
-            _wiki_initialized = True
-    return wiki_kb
+    """复用聊天 RAG 链的 Wiki 实例，确保模式切换对问答和搜索同时生效。"""
+    return knowledge_base_service.rag_chain_service.get_wiki_knowledge_base()
 
 def get_db():
     db = SessionLocal()
@@ -97,15 +73,17 @@ def create_knowledge_base(
             )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("创建知识库失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创建知识库失败: {str(e)}"
+            detail="创建知识库失败"
         )
 
 @router.get("/knowledge-bases/{user_id}", response_model=schemas.KnowledgeBaseListResponse)
 def get_user_knowledge_bases(
     user_id: int,
+    limit: int | None = Query(None, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
@@ -117,7 +95,8 @@ def get_user_knowledge_bases(
         knowledge_bases = knowledge_base_service.get_user_knowledge_bases(
             current_user.id, db
         )
-        print(f"获取到 {len(knowledge_bases)} 个知识库")
+        if limit is not None:
+            knowledge_bases = knowledge_bases[:limit]
         
         kb_responses = []
         for kb in knowledge_bases:
@@ -136,21 +115,18 @@ def get_user_knowledge_bases(
                     updated_at=kb["updated_at"]
                 )
                 kb_responses.append(kb_response)
-            except Exception as kb_error:
-                print(f"处理知识库数据时出错: {kb_error}")
-                print(f"知识库数据: {kb}")
+            except Exception:
+                logger.error("知识库响应序列化失败")
                 continue
         
         return schemas.KnowledgeBaseListResponse(knowledge_bases=kb_responses)
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"获取知识库列表时出现异常: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        logger.error("获取知识库列表失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取知识库列表失败: {str(e)}"
+            detail="获取知识库列表失败"
         )
 
 @router.delete("/knowledge-bases/{knowledge_base_id}")
@@ -177,10 +153,11 @@ def delete_knowledge_base(
             )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("删除知识库失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除知识库失败: {str(e)}"
+            detail="删除知识库失败"
         )
 
 # 文件管理接口
@@ -200,7 +177,6 @@ def upload_file_to_knowledge_base(
         result = knowledge_base_service.upload_file_to_knowledge_base(
             knowledge_base_id, current_user.id, file, db
         )
-        print(f"上传文件到知识库 {knowledge_base_id} 的结果: {result}")
         if result["success"]:
             return schemas.FileUploadResponse(
                 message=result["message"],
@@ -213,10 +189,11 @@ def upload_file_to_knowledge_base(
             )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("文件上传失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"文件上传失败: {str(e)}"
+            detail="文件上传失败"
         )
 
 @router.get("/knowledge-bases/{knowledge_base_id}/files", response_model=schemas.KnowledgeFileListResponse)
@@ -261,10 +238,11 @@ def get_knowledge_base_files(
         return schemas.KnowledgeFileListResponse(files=file_responses, total=len(file_responses))
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("获取文件列表失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取文件列表失败: {str(e)}"
+            detail="获取文件列表失败"
         )
 
 
@@ -308,11 +286,12 @@ def search_knowledge_base(
             top_k,
             min_score,
         )
-    except RuntimeError as exc:
+    except RuntimeError:
+        logger.warning("知识库检索暂时失败")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
+            detail="知识库检索暂时失败",
+        )
     return {
         "query": query,
         "knowledge_base_id": knowledge_base_id,
@@ -346,10 +325,11 @@ def delete_file_from_knowledge_base(
             )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("删除文件失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除文件失败: {str(e)}"
+            detail="删除文件失败"
         )
 
 # 统计信息接口
@@ -381,10 +361,11 @@ def get_user_knowledge_base_stats(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("获取知识库统计失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取统计信息失败: {str(e)}"
+            detail="获取统计信息失败"
         )
 
 # Wiki知识搜索接口
@@ -417,10 +398,40 @@ def enhance_context_with_wiki(
         }
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("Wiki 上下文增强失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"增强上下文失败: {str(e)}"
+            detail="增强上下文失败"
+        )
+
+
+@router.get("/wiki/search", response_model=schemas.WikiSearchResponse)
+def search_wiki(
+    query: str = Query(..., min_length=1, description="查询内容"),
+    limit: int = Query(5, ge=1, le=10, description="返回结果数量"),
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """使用当前 Wiki 模式返回可用于引用展示的结构化结果。"""
+    current_wiki_kb = get_wiki_knowledge_base()
+    if current_wiki_kb is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Wiki 服务暂不可用",
+        )
+    try:
+        results = current_wiki_kb.search_knowledge(query, limit=limit)
+        return {
+            "query": query,
+            "mode": current_wiki_kb.wiki_service.mode,
+            "results": results,
+        }
+    except Exception:
+        logger.error("Wiki 结构化搜索失败")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Wiki 搜索暂时失败",
         )
 
 # Wiki数据管理接口
@@ -447,10 +458,11 @@ def get_wiki_status(
                 "mode": "unavailable",
                 "stats": {}
             }
-    except Exception as e:
+    except Exception:
+        logger.error("获取 Wiki 状态失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取Wiki状态失败: {str(e)}"
+            detail="获取 Wiki 状态失败"
         )
 
 @router.post("/wiki/switch-mode")
@@ -486,10 +498,11 @@ def switch_wiki_mode(
             )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("切换 Wiki 模式失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"切换Wiki模式失败: {str(e)}"
+            detail="切换 Wiki 模式失败"
         )
 
 
@@ -529,9 +542,10 @@ def process_wiki_data(db: Session = Depends(get_db)):
             )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.error("处理 Wiki 数据失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"处理维基百科数据失败: {str(e)}"
+            detail="处理 Wiki 数据失败"
         )
 

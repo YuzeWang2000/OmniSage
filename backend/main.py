@@ -1,17 +1,26 @@
 # backend/app/main.py
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app.routers import auth, chat, rag, conversation, api_keys
-from fastapi import APIRouter
 import ollama
+import logging
 from app.config import settings
 from app.services.llm_service import online_models
 
 ollama_client = ollama.Client(host=settings.OLLAMA_BASE_URL)
+logger = logging.getLogger(__name__)
 # 初始化数据库表
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="ChatSystem", version="0.1")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+)
 
 # 注册路由
 app.include_router(auth.router)
@@ -54,12 +63,10 @@ def get_models():
     except Exception as exc:
         # 在线模型不依赖 Ollama。Ollama 暂时不可用时仍应返回在线模型，
         # 避免前端把整个模型列表错误地显示为空。
-        ollama_error = str(exc)
-        print(f"获取 Ollama 模型列表失败: {ollama_error}")
+        ollama_error = "Ollama 服务暂不可用"
+        logger.warning("获取 Ollama 模型列表失败: %s", type(exc).__name__)
     
     online_models_list = online_models.copy()
-    print(local_models)
-    print(online_models_list)
     return {
         "local_models": local_models,
         "online_models": online_models_list,

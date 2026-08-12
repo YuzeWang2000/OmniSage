@@ -65,7 +65,7 @@ class OptimizedRAGChainService:
                 self.wiki_kb = WikiKnowledgeBase(self.wiki_service)
                 logger.info("使用 %s 维基百科服务", self.wiki_service.mode)
             except Exception:
-                logger.exception("Wiki 服务不可用；普通 RAG 仍可继续使用")
+                logger.warning("Wiki 服务不可用；普通 RAG 仍可继续使用")
                 self.wiki_kb = None
             finally:
                 self._wiki_initialized = True
@@ -81,7 +81,7 @@ class OptimizedRAGChainService:
         top_k: int = 5,
         score_threshold: float = 0.5,
         use_wiki: bool = False,
-        debug_retrieval: bool = True,  # 新增：是否显示检索结果
+        debug_retrieval: bool = False,
         **kwargs
     ) -> Any:
         """
@@ -435,7 +435,7 @@ class OptimizedRAGChainService:
         
         return retriever
     
-    def _create_stuff_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
+    def _create_stuff_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = False, **kwargs):
         """创建Stuff Chain - 增强版，显示检索结果"""
         from langchain.chains import create_retrieval_chain
         from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -478,23 +478,7 @@ class OptimizedRAGChainService:
                     # 先获取检索结果
                     retrieved_docs = self.retriever.invoke(query)
                     
-                    # 显示检索结果
-                    print("=" * 50)
-                    print("[SEARCH] 检索结果详情:")
-                    print(f"查询: {query}")
-                    print(f"检索到 {len(retrieved_docs)} 个相关文档:")
-                    print("-" * 30)
-                    
-                    for i, doc in enumerate(retrieved_docs, 1):
-                        print(f"文档 {i}:")
-                        print(f"内容: {doc.page_content}")
-                        if hasattr(doc, 'metadata') and doc.metadata:
-                            print(f"元数据: {doc.metadata}")
-                        if hasattr(doc, 'score'):
-                            print(f"相似度分数: {doc.score}")
-                        print("-" * 30)
-                    
-                    print("=" * 50)
+                    logger.debug("RAG 检索返回 %s 个文档", len(retrieved_docs))
                     
                     # 调用原始chain
                     result = self.base_chain.invoke(inputs)
@@ -515,13 +499,8 @@ class OptimizedRAGChainService:
                 
                 def stream(self, inputs):
                     query = inputs.get("input", "")
-                    print("[SEARCH] 检索结果详情:")
-                    print(f"查询: {query}") 
-                    # 先获取并显示检索结果
                     retrieved_docs = self.retriever.invoke(query)
-                    print(f"检索到 {len(retrieved_docs)} 个相关文档:")
-                    for doc in retrieved_docs:
-                        print(f"文档内容: {doc.page_content}")
+                    logger.debug("RAG 流式检索返回 %s 个文档", len(retrieved_docs))
                     # 输出检索结果信息
                     yield f"\n🔍 **检索结果** (共找到 {len(retrieved_docs)} 个相关文档):\n"
                     for i, doc in enumerate(retrieved_docs, 1):
@@ -628,7 +607,7 @@ class OptimizedRAGChainService:
         
         return WikiEnhancedChain(base_chain, wiki_kb)
     
-    def _create_map_reduce_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
+    def _create_map_reduce_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = False, **kwargs):
         """创建Map-Reduce Chain"""
         prompt = prompt_manager.get_prompt("rag_default")
         chain = RetrievalQA.from_chain_type(
@@ -647,7 +626,7 @@ class OptimizedRAGChainService:
         
         return chain
     
-    def _create_refine_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
+    def _create_refine_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = False, **kwargs):
         """创建Refine Chain"""
         prompt = prompt_manager.get_prompt("rag_default")
         chain = RetrievalQA.from_chain_type(
@@ -666,7 +645,7 @@ class OptimizedRAGChainService:
         
         return chain
     
-    def _create_map_rerank_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = True, **kwargs):
+    def _create_map_rerank_chain(self, retriever, llm: BaseLanguageModel, use_wiki: bool = False, debug_retrieval: bool = False, **kwargs):
         """创建Map-Rerank Chain"""
         prompt = prompt_manager.get_prompt("rag_default")
         chain = RetrievalQA.from_chain_type(
