@@ -14,6 +14,7 @@ export interface DisplayChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  reasoning?: string;
   status?: "streaming" | "error" | "stopped";
   citations?: ChatCitation[];
   citationError?: string | null;
@@ -21,7 +22,10 @@ export interface DisplayChatMessage {
 }
 
 export interface ChatControls {
-  model: string;
+  modelKey: string;
+  reasoning: "off" | "auto" | "on";
+  reasoningEffort: string | null;
+  workflow: "direct_chat" | "grounded_chat" | "agent";
   ragEnabled: boolean;
   wikiEnabled: boolean;
   knowledgeBaseId: number | null;

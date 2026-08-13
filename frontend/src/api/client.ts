@@ -34,6 +34,7 @@ export type ApiErrorKind =
 export class ApiError extends Error {
   readonly status?: number;
   readonly kind: ApiErrorKind;
+  readonly code?: string;
   readonly fieldErrors?: Record<string, string>;
 
   constructor(
@@ -41,6 +42,7 @@ export class ApiError extends Error {
     options: {
       status?: number;
       kind?: ApiErrorKind;
+      code?: string;
       fieldErrors?: Record<string, string>;
       cause?: unknown;
     } = {},
@@ -49,6 +51,7 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = options.status;
     this.kind = options.kind || "unknown";
+    this.code = options.code;
     this.fieldErrors = options.fieldErrors;
   }
 }
@@ -77,10 +80,27 @@ const getValidationErrors = (detail: unknown) => {
 
 const safeDetail = (data: unknown) => {
   if (!data || typeof data !== "object") return undefined;
-  const detail = (data as { detail?: unknown }).detail;
+  const response = data as { detail?: unknown; error?: { message?: unknown } };
+  const detail = typeof response.detail === "string"
+    ? response.detail
+    : response.error && typeof response.error.message === "string"
+      ? response.error.message
+      : undefined;
   if (typeof detail !== "string") return undefined;
   const clean = detail.replace(/[\r\n\t]+/g, " ").trim();
   return clean.length > 240 ? `${clean.slice(0, 237)}...` : clean;
+};
+
+const standardError = (data: unknown) => {
+  if (!data || typeof data !== "object") return undefined;
+  const value = (data as { error?: unknown }).error;
+  if (!value || typeof value !== "object") return undefined;
+  const code = (value as { code?: unknown }).code;
+  const message = (value as { message?: unknown }).message;
+  return {
+    code: typeof code === "string" ? code : undefined,
+    message: typeof message === "string" ? message : undefined,
+  };
 };
 
 const apiErrorFromAxios = (error: AxiosError): ApiError => {
@@ -93,6 +113,7 @@ const apiErrorFromAxios = (error: AxiosError): ApiError => {
   }
 
   const status = error.response?.status;
+  const backendError = standardError(error.response?.data);
   const detail = safeDetail(error.response?.data);
   const validation = getValidationErrors(
     error.response?.data && typeof error.response.data === "object"
@@ -102,9 +123,25 @@ const apiErrorFromAxios = (error: AxiosError): ApiError => {
 
   switch (status) {
     case 401:
+      if (backendError?.code === "CredentialInvalid") {
+        return new ApiError(detail || "供应商拒绝了 API Key，请检查密钥和地域", {
+          status,
+          kind: "forbidden",
+          code: backendError.code,
+          cause: error,
+        });
+      }
       return new ApiError("登录状态已失效，请重新登录", {
         status,
         kind: "unauthorized",
+        code: backendError?.code,
+        cause: error,
+      });
+    case 424:
+      return new ApiError(detail || "供应商凭据或上游依赖不可用", {
+        status,
+        kind: "forbidden",
+        code: backendError?.code,
         cause: error,
       });
     case 403:
@@ -120,7 +157,7 @@ const apiErrorFromAxios = (error: AxiosError): ApiError => {
         cause: error,
       });
     case 422:
-      return new ApiError("提交内容有误，请检查后重试", {
+      return new ApiError(detail || "提交内容有误，请检查后重试", {
         status,
         kind: "validation",
         fieldErrors: validation,
@@ -177,7 +214,7 @@ apiClient.interceptors.response.use(
     const apiError = apiErrorFromAxios(error);
     const requestConfig = error.config as ApiRequestConfig | undefined;
     if (
-      apiError.status === 401 &&
+      apiError.status === 401 && apiError.kind === "unauthorized" &&
       !requestConfig?.skipAuthFailure &&
       useAuthStore.getState().token
     ) {

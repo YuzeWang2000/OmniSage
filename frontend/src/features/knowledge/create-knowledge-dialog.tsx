@@ -45,7 +45,7 @@ export function CreateKnowledgeDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-[#101828]/45 backdrop-blur-[2px]" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-24px)] w-[calc(100vw-24px)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-surface p-5 shadow-2xl outline-none sm:p-6">
+        <Dialog.Content className="fixed inset-y-3 left-1/2 z-50 w-[calc(100vw-24px)] max-w-lg -translate-x-1/2 overflow-y-auto rounded-2xl border bg-surface p-5 shadow-2xl outline-none sm:inset-y-auto sm:top-1/2 sm:max-h-[calc(100vh-24px)] sm:-translate-y-1/2 sm:p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
               <Dialog.Title className="text-lg font-semibold">创建知识库</Dialog.Title>

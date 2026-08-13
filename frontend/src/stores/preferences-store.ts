@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 export interface UserPreferences {
-  defaultModel: string;
+  defaultModelKey: string;
   ragEnabled: boolean;
   wikiEnabled: boolean;
 }
@@ -12,7 +12,7 @@ interface PreferencesState extends UserPreferences {
 }
 
 const initialPreferences: UserPreferences = {
-  defaultModel: "",
+  defaultModelKey: "",
   ragEnabled: false,
   wikiEnabled: false,
 };
@@ -26,8 +26,8 @@ export const usePreferencesStore = create<PreferencesState>()(
     {
       name: "omnisage-device-preferences",
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ defaultModel, ragEnabled, wikiEnabled }) => ({
-        defaultModel,
+      partialize: ({ defaultModelKey, ragEnabled, wikiEnabled }) => ({
+        defaultModelKey,
         ragEnabled,
         wikiEnabled,
       }),

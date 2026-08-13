@@ -105,7 +105,7 @@ def get_user_conversations(
             detail="获取对话列表失败"
         )
 
-@router.get("/{conversation_id}/messages", response_model=schemas.ChatHistoryResponse)
+@router.get("/{conversation_id}/messages", response_model=schemas.ConversationMessagesResponse)
 def get_conversation_messages(
     conversation_id: int,
     user_id: int | None = None,
@@ -132,9 +132,10 @@ def get_conversation_messages(
             message_responses.append(schemas.ChatMessageResponse(
                 role=msg['role'],
                 content=msg['content'],
+                model_key=msg.get('model_key'),
             ))
         
-        return schemas.ChatHistoryResponse(
+        return schemas.ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=message_responses
         )

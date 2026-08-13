@@ -1,38 +1,12 @@
-# OmniSage React 前端
+# OmniSage Frontend
 
-这是 OmniSage 的正式 Web 前端，使用 TypeScript、React 和 Vite，通过 HTTP/SSE 连接现有 FastAPI 后端。浏览器端不包含 RAG、模型调用或数据库业务逻辑。
+需要 Node 20.19+ 或 22.12+、pnpm 11。
 
-## 环境要求
-
-- Node.js 20.19+ 或 22.12+
-- pnpm 11
-- 已启动的 OmniSage FastAPI（默认 `http://127.0.0.1:8000`）
-
-## 本地开发
-
-```bash
+```powershell
 pnpm install
-copy .env.example .env.local
+Copy-Item .env.example .env.local
 pnpm dev
-```
-
-开发地址为 `http://127.0.0.1:5173`。默认情况下，Vite 把 `/api` 代理到 `http://127.0.0.1:8000`，包括不缓冲的 SSE 聊天流。
-
-## 环境变量
-
-| 变量                      | 用途                            | 开发默认值                     |
-| ------------------------- | ------------------------------- | ------------------------------ |
-| `VITE_API_BASE_URL`       | 浏览器访问的 API 前缀或绝对地址 | 示例为 `http://127.0.0.1:8000` |
-| `VITE_DEV_PROXY_TARGET`   | Vite 开发代理目标               | `http://127.0.0.1:8000`        |
-| `VITE_REQUEST_TIMEOUT_MS` | 普通请求超时                    | `30000`                        |
-| `VITE_UPLOAD_TIMEOUT_MS`  | 文件上传/索引超时               | `180000`                       |
-| `VITE_CHAT_TIMEOUT_MS`    | 聊天流超时                      | `120000`                       |
-
-不创建 `.env.local` 时，开发模式会自动使用 `/api` 代理；若采用 `.env.example` 的绝对地址，FastAPI 必须允许当前前端来源。生产构建中的 `VITE_*` 变量会被写入静态资源，不能用于保存密钥。JWT 由集中式会话模块保存在 `sessionStorage`；业务组件不会直接读取或写入 Token。
-
-## 质量命令
-
-```bash
+pnpm generate:api
 pnpm typecheck
 pnpm lint
 pnpm test
@@ -40,22 +14,10 @@ pnpm build
 pnpm exec playwright test
 ```
 
-Playwright 使用本机 Chrome 的隔离上下文，并在测试进程内启动临时 Vite 服务。API 和 SSE 由可控网络拦截提供，不会调用外部大模型。
+`generate:api` 默认读取仓库根 `openapi.json`，也可用 `VITE_OPENAPI_URL` 指向运行中的 FastAPI。开发环境变量为 `VITE_API_BASE_URL`、`VITE_DEV_PROXY_TARGET`、`VITE_REQUEST_TIMEOUT_MS`、`VITE_UPLOAD_TIMEOUT_MS`、`VITE_CHAT_TIMEOUT_MS`。
 
-## OpenAPI 类型
+设置页管理 Ollama、DeepSeek、百炼连接，可测试连接、刷新模型并查看 Key 掩码；百炼表单包含地域、Workspace 和可选模型白名单。白名单为空时刷新全部远端候选，填写后只显示指定模型；目录展示任务类型与输入输出模态。聊天模型按 Provider/Connection 分组，仅显示可用 text Chat 模型。Reasoning、effort 和 Agent 由 ModelDescriptor capability 驱动；切换模型会清理不兼容参数。stale 模型会标注“缓存已过期”。TanStack Query 管理连接与模型服务端状态，Zustand 不复制目录且 localStorage 不保存 Key。
 
-后端启动后执行：
+当前没有图片/音频上传、TTS、在线 Embedding/Rerank 选择或视觉调用入口。模型目录为空时先在设置页创建连接并刷新；连接读取失败不会覆盖正在编辑的表单。
 
-```bash
-pnpm generate:api
-```
-
-脚本从 `http://127.0.0.1:8000/openapi.json` 生成 `src/api/schema.d.ts`。提交接口改动时应同步更新该文件。
-
-## 生产构建
-
-```bash
-pnpm build
-```
-
-输出位于 `dist/`。仓库中的多阶段 `Dockerfile` 使用 Nginx 提供静态资源，并把同源 `/api/` 反向代理到 `backend:8000`；聊天位置已禁用代理缓冲。
+设置页支持独立轮换 Key（不会读取旧值）、展示模型 source/stale/task/capability/授权待验证状态，以及为百炼补充模型显式声明能力。reasoning 与 answer 在 SSE 中分流；推理文本仅在当前流中折叠展示，不写入会话历史。2026-08-12 实测 typecheck、lint、生产 build 通过，Vitest `25 passed`，Playwright `5 passed`（含 390px 移动端无横向溢出）。

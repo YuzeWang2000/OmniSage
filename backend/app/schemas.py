@@ -19,25 +19,7 @@ class AuthResponse(UserResponse):
     access_token: str
     token_type: str = "bearer"
 
-class ChatRequest(BaseModel):
-    # 兼容旧客户端；服务端身份始终取自 Bearer Token。
-    user_id: Optional[int] = None
-    conversation_id: int
-    message: str
-    model: str
-    mode: str = "chat"
-    use_rag: bool = False
-    use_wiki: bool = False  # 添加Wiki知识支持
-    # 未传时继续使用旧版的“第一个知识库”行为。
-    knowledge_base_id: Optional[int] = None
-    stream: bool = True
-    regenerate: bool = False
-    # Chain相关参数
-    chain_type: str = "stuff"
-    prompt_name: str = "chat_default"
-    use_reranker: bool = True
-    top_k: int = 5
-    score_threshold: float = 0.5
+from .ai.contracts.requests import NormalizedChatRequest as ChatRequest
 
 class ChatResponse(BaseModel):
     response: str
@@ -68,35 +50,12 @@ class ConversationListResponse(BaseModel):
 
 class ChatMessageResponse(BaseModel):
     role: str
-    content: str
+    content: List[Dict[str, Any]]
+    model_key: Optional[str] = None
 
-class ChatHistoryResponse(BaseModel):
+class ConversationMessagesResponse(BaseModel):
     conversation_id: int
     messages: List[ChatMessageResponse]
-
-# API Key相关schemas
-class ApiKeyCreate(BaseModel):
-    user_id: Optional[int] = None
-    provider: str  # 'openai', 'deepseek', 'anthropic', etc.
-    api_key: str
-    model_name: Optional[str] = None
-
-class ApiKeyResponse(BaseModel):
-    id: int
-    user_id: int
-    provider: str
-    model_name: Optional[str]
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-class ApiKeyListResponse(BaseModel):
-    api_keys: List[ApiKeyResponse]
-
-class ApiKeyUpdate(BaseModel):
-    api_key: str
-    model_name: Optional[str] = None
-    is_active: bool = True
 
 # 知识库相关schemas
 class KnowledgeBaseCreate(BaseModel):

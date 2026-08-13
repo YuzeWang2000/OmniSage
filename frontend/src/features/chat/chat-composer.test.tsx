@@ -1,73 +1,12 @@
 import { screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { useCallback, useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import { getKnowledgeBases } from "@/api/knowledge";
-import { getWikiStatus, switchWikiMode } from "@/api/settings";
+import { describe,expect,it,vi } from "vitest";
 import { getModels } from "@/api/system";
+import { getKnowledgeBases } from "@/api/knowledge";
 import { ChatComposer } from "@/features/chat/chat-composer";
-import type { ChatControls } from "@/features/chat/types";
 import { renderWithProviders } from "@/test/render";
+import { useAuthStore } from "@/stores/auth-store";
+vi.mock("@/api/system",()=>({getModels:vi.fn()}));
+vi.mock("@/api/knowledge",()=>({getKnowledgeBases:vi.fn()}));
+describe("ChatComposer",()=>{it("shows capability driven reasoning",async()=>{vi.mocked(getModels).mockResolvedValue([{key:"deepseek::c::m",connection_id:"c",provider:"deepseek",id:"m",display_name:"M",source:"provider_api",available:true,task_types:["chat"],input_modalities:["text"],output_modalities:["text"],capabilities:{reasoning:true,reasoning_toggle:true,reasoning_efforts:["high"],streaming:true},stale:false,vision:false}]);vi.mocked(getKnowledgeBases).mockResolvedValue([]);renderWithProviders(<ChatComposer value="" controls={{modelKey:"deepseek::c::m",reasoning:"auto",reasoningEffort:null,workflow:"direct_chat",ragEnabled:false,wikiEnabled:false,knowledgeBaseId:null}} streaming={false} hasConversation onValueChange={vi.fn()} onControlsChange={vi.fn()} onSubmit={vi.fn()} onStop={vi.fn()}/>);expect(await screen.findByLabelText("推理模式")).toBeInTheDocument();});
 
-vi.mock("@/api/system", () => ({ getModels: vi.fn() }));
-vi.mock("@/api/knowledge", () => ({ getKnowledgeBases: vi.fn() }));
-vi.mock("@/api/settings", () => ({ getWikiStatus: vi.fn(), switchWikiMode: vi.fn() }));
-
-function Harness() {
-  const [controls, setControls] = useState<ChatControls>({
-    model: "qwen-local",
-    ragEnabled: false,
-    wikiEnabled: false,
-    knowledgeBaseId: null,
-  });
-  const update = useCallback((changes: Partial<ChatControls>) => {
-    setControls((current) => ({ ...current, ...changes }));
-  }, []);
-  return (
-    <ChatComposer
-      userId={7}
-      value=""
-      controls={controls}
-      streaming={false}
-      hasConversation
-      onValueChange={vi.fn()}
-      onControlsChange={update}
-      onSubmit={vi.fn()}
-      onStop={vi.fn()}
-    />
-  );
-}
-
-describe("ChatComposer", () => {
-  beforeEach(() => {
-    vi.mocked(getModels).mockResolvedValue({
-      local_models: ["qwen-local"],
-      online_models: [],
-      all_models: ["qwen-local"],
-    });
-    vi.mocked(getKnowledgeBases).mockResolvedValue([]);
-    vi.mocked(getWikiStatus).mockResolvedValue({ success: true, mode: "online", stats: {} });
-    vi.mocked(switchWikiMode).mockResolvedValue({
-      success: true,
-      mode: "online",
-      stats: {},
-      message: "ok",
-    });
-  });
-
-  it("lets the user independently toggle RAG and Wiki", async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<Harness />);
-
-    const rag = screen.getByRole("switch", { name: "启用 RAG" });
-    const wiki = screen.getByRole("switch", { name: "启用 Wiki" });
-    expect(rag).toHaveAttribute("aria-checked", "false");
-    expect(wiki).toHaveAttribute("aria-checked", "false");
-
-    await user.click(rag);
-    expect(rag).toHaveAttribute("aria-checked", "true");
-    await user.click(wiki);
-    expect(wiki).toHaveAttribute("aria-checked", "true");
-  });
-});
+it("requires selecting a knowledge base before grounded chat can submit",async()=>{useAuthStore.setState({token:"token",user:{user_id:1,username:"sage"},hasHydrated:true});vi.mocked(getModels).mockResolvedValue([{key:"deepseek::c::m",connection_id:"c",provider:"deepseek",id:"m",display_name:"M",source:"provider_api",available:true,task_types:["chat"],input_modalities:["text"],output_modalities:["text"],capabilities:{reasoning_efforts:[],streaming:true},stale:false,vision:false}]);vi.mocked(getKnowledgeBases).mockResolvedValue([{id:7,user_id:1,name:"Docs",description:null,embedding_model:"nomic-embed-text",vector_db_path:"x",file_count:1,document_count:2,is_active:true,created_at:"2026-01-01T00:00:00Z",updated_at:"2026-01-01T00:00:00Z"}]);const onSubmit=vi.fn();renderWithProviders(<ChatComposer value="question" controls={{modelKey:"deepseek::c::m",reasoning:"auto",reasoningEffort:null,workflow:"grounded_chat",ragEnabled:true,wikiEnabled:false,knowledgeBaseId:null}} streaming={false} hasConversation onValueChange={vi.fn()} onControlsChange={vi.fn()} onSubmit={onSubmit} onStop={vi.fn()}/>);expect(await screen.findByRole("option",{name:"Docs"})).toBeInTheDocument();expect(screen.getByLabelText("知识库")).toBeInTheDocument();expect(screen.getByRole("button",{name:"发送消息"})).toBeDisabled();});});

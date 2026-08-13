@@ -27,12 +27,16 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useChatStore } from "@/stores/chat-store";
 import { usePreferencesStore } from "@/stores/preferences-store";
 
-type ChatHistory = ApiSchemas["ChatHistoryResponse"];
+type ConversationMessages = ApiSchemas["ConversationMessagesResponse"];
+
+const contentText = (content: ConversationMessages["messages"][number]["content"]) =>
+  content.filter((part) => part.type === "text").map((part) => "text" in part ? part.text : "").join("\n");
 
 interface ChatAttempt {
   id: string;
   prompt: string;
   answer: string;
+  reasoning: string;
   kind: "new" | "regenerate";
   status: "streaming" | "error" | "stopped";
   controls: ChatControls;
@@ -46,7 +50,7 @@ interface MessageExtra {
 const messageExtraKey = (conversationId: number, assistantIndex: number) =>
   `${conversationId}:${assistantIndex}`;
 
-function findLastAssistantIndex(messages: ChatHistory["messages"]) {
+function findLastAssistantIndex(messages: ConversationMessages["messages"]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === "assistant") return index;
   }
@@ -69,12 +73,16 @@ export function ChatWorkspace() {
   const [attempt, setAttempt] = useState<ChatAttempt | null>(null);
   const [messageExtras, setMessageExtras] = useState<Record<string, MessageExtra>>({});
   const [controls, setControls] = useState<ChatControls>(() => ({
-    model: initialPreferences.current.defaultModel,
+    modelKey: initialPreferences.current.defaultModelKey,
+    reasoning: "auto",
+    reasoningEffort: null,
+    workflow: initialPreferences.current.ragEnabled ? "grounded_chat" : "direct_chat",
     ragEnabled: initialPreferences.current.ragEnabled,
     wikiEnabled: initialPreferences.current.wikiEnabled,
     knowledgeBaseId: null,
   }));
   const abortRef = useRef<AbortController | null>(null);
+  const pendingUrlConversationRef = useRef<number | null | undefined>(undefined);
 
   const conversations = useQuery({
     queryKey: queryKeys.conversations.all(userId),
@@ -97,10 +105,11 @@ export function ChatWorkspace() {
           queryKey: queryKeys.conversations.messages(activeConversationId),
         });
       }
-      setActiveConversationId(id);
+      pendingUrlConversationRef.current = id;
       const next = new URLSearchParams();
       if (id) next.set("conversation", String(id));
       setSearchParams(next, { replace });
+      setActiveConversationId(id);
       setMobilePanelOpen(false);
     },
     [activeConversationId, queryClient, setActiveConversationId, setSearchParams],
@@ -108,8 +117,15 @@ export function ChatWorkspace() {
 
   useEffect(() => {
     const requested = Number(searchParams.get("conversation"));
-    if (Number.isInteger(requested) && requested > 0 && requested !== activeConversationId) {
-      setActiveConversationId(requested);
+    const requestedId = Number.isInteger(requested) && requested > 0 ? requested : null;
+    if (pendingUrlConversationRef.current !== undefined) {
+      if (requestedId === pendingUrlConversationRef.current) {
+        pendingUrlConversationRef.current = undefined;
+      }
+      return;
+    }
+    if (requestedId !== null && requestedId !== activeConversationId) {
+      setActiveConversationId(requestedId);
     }
   }, [activeConversationId, searchParams, setActiveConversationId]);
 
@@ -150,8 +166,9 @@ export function ChatWorkspace() {
   const deleteConversationMutation = useMutation({
     mutationFn: (id: number) => deleteConversation(id),
     onSuccess: (_, deletedId) => {
-      const remaining = (conversations.data || []).filter(({ id }) => id !== deletedId);
-      queryClient.setQueryData(queryKeys.conversations.all(userId), remaining);
+      const current = queryClient.getQueryData<Conversation[]>(queryKeys.conversations.all(userId)) || [];
+      const remaining = current.filter(({ id }) => id !== deletedId);
+      queryClient.setQueryData<Conversation[]>(queryKeys.conversations.all(userId), remaining);
       queryClient.removeQueries({ queryKey: queryKeys.conversations.messages(deletedId) });
       if (activeConversationId === deletedId) selectConversation(remaining[0]?.id ?? null, true);
     },
@@ -205,30 +222,29 @@ export function ChatWorkspace() {
         id: attemptId,
         prompt: prompt.trim(),
         answer: "",
+        reasoning: "",
         kind,
         status: "streaming",
         controls: snapshot,
       });
       if (kind === "new") setDraft("");
       let answer = "";
+      let reasoning = "";
 
       try {
+        if (snapshot.workflow === "grounded_chat" && !snapshot.wikiEnabled && !snapshot.knowledgeBaseId) {
+          throw new ApiError("请选择知识库后再发送", { kind: "validation" });
+        }
         await streamChat(
           {
             conversation_id: conversationId,
-            message: prompt.trim(),
-            model: snapshot.model,
-            mode: "chat",
-            use_rag: snapshot.ragEnabled,
-            use_wiki: snapshot.wikiEnabled,
-            knowledge_base_id: snapshot.knowledgeBaseId,
-            stream: true,
+            messages: [{ role: "user", content: [{ type: "text", text: prompt.trim() }], metadata: {} }],
+            model_key: snapshot.modelKey,
+            workflow: snapshot.workflow,
+            options: { reasoning: snapshot.reasoning, reasoning_effort: snapshot.reasoningEffort, structured_output: false, tools: [] },
+            retrieval: { enabled: snapshot.ragEnabled, wiki: snapshot.wikiEnabled, knowledge_base_id: snapshot.knowledgeBaseId, use_reranker: true, top_k: 5, score_threshold: 0.5 },
+            model_slots: { generation_model_key: snapshot.modelKey, embedding_model_key: null, rerank_model_key: null, speech_model_key: null },
             regenerate: kind === "regenerate",
-            chain_type: "stuff",
-            prompt_name: "chat_default",
-            use_reranker: true,
-            top_k: 5,
-            score_threshold: 0.5,
           },
           {
             signal: controller.signal,
@@ -238,10 +254,16 @@ export function ChatWorkspace() {
                 current?.id === attemptId ? { ...current, answer } : current,
               );
             },
+            onReasoning: (chunk) => {
+              reasoning += chunk;
+              setAttempt((current) =>
+                current?.id === attemptId ? { ...current, reasoning } : current,
+              );
+            },
           },
         );
 
-        const previous = queryClient.getQueryData<ChatHistory>(
+        const previous = queryClient.getQueryData<ConversationMessages>(
           queryKeys.conversations.messages(conversationId),
         ) || { conversation_id: conversationId, messages: [] };
         const nextMessages = [...previous.messages];
@@ -250,13 +272,13 @@ export function ChatWorkspace() {
           assistantIndex = findLastAssistantIndex(nextMessages);
           if (assistantIndex < 0)
             throw new ApiError("没有可重新生成的回答", { kind: "validation" });
-          nextMessages[assistantIndex] = { role: "assistant", content: answer };
+          nextMessages[assistantIndex] = { role: "assistant", content: [{type:"text",text:answer}] };
         } else {
-          nextMessages.push({ role: "user", content: prompt.trim() });
+          nextMessages.push({ role: "user", content: [{type:"text",text:prompt.trim()}] });
           assistantIndex = nextMessages.length;
-          nextMessages.push({ role: "assistant", content: answer });
+          nextMessages.push({ role: "assistant", content: [{type:"text",text:answer}] });
         }
-        queryClient.setQueryData<ChatHistory>(queryKeys.conversations.messages(conversationId), {
+        queryClient.setQueryData<ConversationMessages>(queryKeys.conversations.messages(conversationId), {
           conversation_id: conversationId,
           messages: nextMessages,
         });
@@ -303,7 +325,7 @@ export function ChatWorkspace() {
       return {
         id: `server-${activeConversationId}-${index}`,
         role: message.role === "user" ? "user" : "assistant",
-        content: message.content,
+        content: contentText(message.content),
         citations: extra?.citations,
         citationError: extra?.citationError,
         canRegenerate: !attempt && index === lastAssistantIndex && message.role === "assistant",
@@ -315,6 +337,7 @@ export function ChatWorkspace() {
         id: attempt.id,
         role: "assistant",
         content: attempt.answer,
+        reasoning: attempt.reasoning,
         status: attempt.status,
       };
     } else if (attempt) {
@@ -323,6 +346,7 @@ export function ChatWorkspace() {
         id: `${attempt.id}-assistant`,
         role: "assistant",
         content: attempt.answer,
+        reasoning: attempt.reasoning,
         status: attempt.status,
       });
     }
@@ -334,7 +358,7 @@ export function ChatWorkspace() {
     const assistantIndex = findLastAssistantIndex(source);
     if (assistantIndex < 1) return null;
     const candidate = source[assistantIndex - 1];
-    return candidate?.role === "user" ? candidate.content : null;
+    return candidate?.role === "user" ? contentText(candidate.content) : null;
   }, [messages.data?.messages]);
 
   const activeConversation = conversations.data?.find(({ id }) => id === activeConversationId);
@@ -413,7 +437,6 @@ export function ChatWorkspace() {
           }}
         />
         <ChatComposer
-          userId={userId}
           value={draft}
           controls={controls}
           streaming={attempt?.status === "streaming"}

@@ -1,0 +1,2 @@
+"""Typed AI provider architecture."""
+

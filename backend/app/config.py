@@ -3,6 +3,8 @@ import os
 import secrets
 from typing import Optional
 
+from . import environment as _environment  # noqa: F401
+
 class Settings:
     """应用配置类"""
     
@@ -17,15 +19,15 @@ class Settings:
         )
     
     # LLM配置
-    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemma3n")
     EMBEDDING_MODEL: str = os.getenv(
             "EMBEDDING_MODEL",
             "nomic-embed-text",
         )
     
     # 在线模型配置
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY")
+    CREDENTIAL_ENCRYPTION_KEY: Optional[str] = os.getenv("CREDENTIAL_ENCRYPTION_KEY")
+    MODEL_CACHE_TTL_SECONDS: int = int(os.getenv("MODEL_CACHE_TTL_SECONDS", "3600"))
+    APP_ENV: str = os.getenv("APP_ENV", "development").strip().lower()
     
     
     # 向量数据库配置

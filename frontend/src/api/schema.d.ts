@@ -68,10 +68,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Chat Stream Endpoint
-         * @description 流式聊天接口
-         */
+        /** Chat Stream Endpoint */
         post: operations["chat_stream_endpoint_chat_stream_post"];
         delete?: never;
         options?: never;
@@ -387,38 +384,15 @@ export interface paths {
         patch: operations["rename_conversation_conversations__conversation_id__patch"];
         trace?: never;
     };
-    "/api-keys/": {
+    "/ai/providers": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /**
-         * Create Api Key
-         * @description 创建API key
-         */
-        post: operations["create_api_key_api_keys__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api-keys/user/{user_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get User Api Keys
-         * @description 获取用户的所有API key
-         */
-        get: operations["get_user_api_keys_api_keys_user__user_id__get"];
+        /** Providers */
+        get: operations["providers_ai_providers_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -427,7 +401,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api-keys/{api_key_id}": {
+    "/ai/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Connections */
+        get: operations["connections_ai_connections_get"];
+        put?: never;
+        /** Create Connection */
+        post: operations["create_connection_ai_connections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Connection */
+        get: operations["get_connection_ai_connections__connection_id__get"];
+        /** Update Connection */
+        put: operations["update_connection_ai_connections__connection_id__put"];
+        post?: never;
+        /** Delete Connection */
+        delete: operations["delete_connection_ai_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/connections/{connection_id}/test": {
         parameters: {
             query?: never;
             header?: never;
@@ -435,17 +446,78 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /**
-         * Update Api Key
-         * @description 更新属于当前用户的 API Key，响应中不会返回密钥正文。
-         */
-        put: operations["update_api_key_api_keys__api_key_id__put"];
+        put?: never;
+        /** Test Connection */
+        post: operations["test_connection_ai_connections__connection_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/connections/{connection_id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Connection Models */
+        get: operations["connection_models_ai_connections__connection_id__models_get"];
+        put?: never;
         post?: never;
-        /**
-         * Delete Api Key
-         * @description 删除API key
-         */
-        delete: operations["delete_api_key_api_keys__api_key_id__delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/connections/{connection_id}/models/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Models */
+        post: operations["refresh_models_ai_connections__connection_id__models_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models */
+        get: operations["models_ai_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/models/{model_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Model */
+        get: operations["model_ai_models__model_key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -468,80 +540,19 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Models
-         * @description 返回可用模型列表，分为本地模型和在线模型
-         */
-        get: operations["get_models_models_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** ApiKeyCreate */
-        ApiKeyCreate: {
-            /** User Id */
-            user_id?: number | null;
-            /** Provider */
-            provider: string;
-            /** Api Key */
-            api_key: string;
-            /** Model Name */
-            model_name?: string | null;
-        };
-        /** ApiKeyListResponse */
-        ApiKeyListResponse: {
-            /** Api Keys */
-            api_keys: components["schemas"]["ApiKeyResponse"][];
-        };
-        /** ApiKeyResponse */
-        ApiKeyResponse: {
-            /** Id */
-            id: number;
-            /** User Id */
-            user_id: number;
-            /** Provider */
-            provider: string;
-            /** Model Name */
-            model_name: string | null;
-            /** Is Active */
-            is_active: boolean;
+        /** AudioPart */
+        AudioPart: {
             /**
-             * Created At
-             * Format: date-time
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
-            created_at: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /** ApiKeyUpdate */
-        ApiKeyUpdate: {
-            /** Api Key */
-            api_key: string;
-            /** Model Name */
-            model_name?: string | null;
-            /**
-             * Is Active
-             * @default true
-             */
-            is_active: boolean;
+            type: "audio";
+            /** Asset Id */
+            asset_id: string;
         };
         /** AuthResponse */
         AuthResponse: {
@@ -565,82 +576,80 @@ export interface components {
              */
             file: string;
         };
-        /** ChatHistoryResponse */
-        ChatHistoryResponse: {
-            /** Conversation Id */
-            conversation_id: number;
-            /** Messages */
-            messages: components["schemas"]["ChatMessageResponse"][];
-        };
         /** ChatMessageResponse */
         ChatMessageResponse: {
             /** Role */
             role: string;
             /** Content */
-            content: string;
+            content: {
+                [key: string]: unknown;
+            }[];
+            /** Model Key */
+            model_key?: string | null;
         };
-        /** ChatRequest */
-        ChatRequest: {
-            /** User Id */
-            user_id?: number | null;
-            /** Conversation Id */
-            conversation_id: number;
-            /** Message */
-            message: string;
-            /** Model */
-            model: string;
+        /** ChatOptions */
+        ChatOptions: {
+            /** @default auto */
+            reasoning: components["schemas"]["ReasoningMode"];
+            /** Reasoning Effort */
+            reasoning_effort?: string | null;
+            /** Temperature */
+            temperature?: number | null;
             /**
-             * Mode
-             * @default chat
-             */
-            mode: string;
-            /**
-             * Use Rag
+             * Structured Output
              * @default false
              */
-            use_rag: boolean;
+            structured_output: boolean;
+            /** Tools */
+            tools?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** ConnectionCreate */
+        ConnectionCreate: {
+            provider: components["schemas"]["ProviderType"];
+            /** Display Name */
+            display_name: string;
+            /** Region */
+            region?: string | null;
+            /** Base Url */
+            base_url?: string | null;
+            /** Workspace Id */
+            workspace_id?: string | null;
+            /** Api Key */
+            api_key?: string | null;
+            /** Manual Models */
+            manual_models?: string[];
+            /** Manual Model Capabilities */
+            manual_model_capabilities?: {
+                [key: string]: components["schemas"]["ModelCapabilities"];
+            };
             /**
-             * Use Wiki
-             * @default false
-             */
-            use_wiki: boolean;
-            /** Knowledge Base Id */
-            knowledge_base_id?: number | null;
-            /**
-             * Stream
+             * Is Active
              * @default true
              */
-            stream: boolean;
-            /**
-             * Regenerate
-             * @default false
-             */
-            regenerate: boolean;
-            /**
-             * Chain Type
-             * @default stuff
-             */
-            chain_type: string;
-            /**
-             * Prompt Name
-             * @default chat_default
-             */
-            prompt_name: string;
-            /**
-             * Use Reranker
-             * @default true
-             */
-            use_reranker: boolean;
-            /**
-             * Top K
-             * @default 5
-             */
-            top_k: number;
-            /**
-             * Score Threshold
-             * @default 0.5
-             */
-            score_threshold: number;
+            is_active: boolean;
+        };
+        /** ConnectionUpdate */
+        ConnectionUpdate: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Base Url */
+            base_url?: string | null;
+            /** Workspace Id */
+            workspace_id?: string | null;
+            /** Api Key */
+            api_key?: string | null;
+            /** Manual Models */
+            manual_models?: string[] | null;
+            /** Manual Model Capabilities */
+            manual_model_capabilities?: {
+                [key: string]: components["schemas"]["ModelCapabilities"];
+            } | null;
+            /** Is Active */
+            is_active?: boolean | null;
         };
         /** ConversationCreate */
         ConversationCreate: {
@@ -653,6 +662,13 @@ export interface components {
         ConversationListResponse: {
             /** Conversations */
             conversations: components["schemas"]["ConversationResponse"][];
+        };
+        /** ConversationMessagesResponse */
+        ConversationMessagesResponse: {
+            /** Conversation Id */
+            conversation_id: number;
+            /** Messages */
+            messages: components["schemas"]["ChatMessageResponse"][];
         };
         /** ConversationResponse */
         ConversationResponse: {
@@ -687,6 +703,16 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** DocumentPart */
+        DocumentPart: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+            /** Asset Id */
+            asset_id: string;
+        };
         /** FileUploadResponse */
         FileUploadResponse: {
             /** Message */
@@ -701,6 +727,22 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** ImagePart */
+        ImagePart: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "image";
+            /** Asset Id */
+            asset_id: string;
+            /**
+             * Detail
+             * @default auto
+             * @enum {string}
+             */
+            detail: "auto" | "low" | "high";
         };
         /** KnowledgeBaseCreate */
         KnowledgeBaseCreate: {
@@ -827,6 +869,145 @@ export interface components {
              */
             updated_at: string;
         };
+        /**
+         * Modality
+         * @enum {string}
+         */
+        Modality: "text" | "image" | "audio" | "video" | "document";
+        /** ModelCapabilities */
+        ModelCapabilities: {
+            /** Streaming */
+            streaming?: boolean | null;
+            /** Reasoning */
+            reasoning?: boolean | null;
+            /** Reasoning Toggle */
+            reasoning_toggle?: boolean | null;
+            /** Reasoning Efforts */
+            reasoning_efforts?: string[];
+            /** Tools */
+            tools?: boolean | null;
+            /** Structured Output */
+            structured_output?: boolean | null;
+            /** Json Output */
+            json_output?: boolean | null;
+            /** Function Calling */
+            function_calling?: boolean | null;
+        };
+        /** ModelSlots */
+        ModelSlots: {
+            /** Generation Model Key */
+            generation_model_key?: string | null;
+            /** Embedding Model Key */
+            embedding_model_key?: string | null;
+            /** Rerank Model Key */
+            rerank_model_key?: string | null;
+            /** Speech Model Key */
+            speech_model_key?: string | null;
+        };
+        /**
+         * ModelTaskType
+         * @enum {string}
+         */
+        ModelTaskType: "chat" | "text_generation" | "embedding" | "rerank" | "text_to_speech" | "speech_to_text" | "image_understanding" | "image_generation" | "video_understanding" | "video_generation";
+        /** NormalizedChatRequest */
+        NormalizedChatRequest: {
+            /** Conversation Id */
+            conversation_id: number;
+            /** Messages */
+            messages: components["schemas"]["NormalizedMessage"][];
+            /** Model Key */
+            model_key: string;
+            /** @default direct_chat */
+            workflow: components["schemas"]["WorkflowType"];
+            options?: components["schemas"]["ChatOptions"];
+            retrieval?: components["schemas"]["RetrievalOptions"];
+            model_slots?: components["schemas"]["ModelSlots"];
+            /**
+             * Regenerate
+             * @default false
+             */
+            regenerate: boolean;
+        };
+        /** NormalizedMessage */
+        NormalizedMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "system" | "user" | "assistant" | "tool";
+            /** Content */
+            content: (components["schemas"]["TextPart"] | components["schemas"]["ImagePart"] | components["schemas"]["AudioPart"] | components["schemas"]["VideoPart"] | components["schemas"]["DocumentPart"] | components["schemas"]["ToolResultPart"])[];
+            /** Name */
+            name?: string | null;
+            /** Tool Call Id */
+            tool_call_id?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * ProviderType
+         * @enum {string}
+         */
+        ProviderType: "ollama" | "deepseek" | "dashscope";
+        /**
+         * ReasoningMode
+         * @enum {string}
+         */
+        ReasoningMode: "off" | "auto" | "on";
+        /** RetrievalOptions */
+        RetrievalOptions: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Wiki
+             * @default false
+             */
+            wiki: boolean;
+            /** Knowledge Base Id */
+            knowledge_base_id?: number | null;
+            /**
+             * Use Reranker
+             * @default true
+             */
+            use_reranker: boolean;
+            /**
+             * Top K
+             * @default 5
+             */
+            top_k: number;
+            /**
+             * Score Threshold
+             * @default 0.5
+             */
+            score_threshold: number;
+        };
+        /** TextPart */
+        TextPart: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text";
+            /** Text */
+            text: string;
+        };
+        /** ToolResultPart */
+        ToolResultPart: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_result";
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Content */
+            content: string;
+        };
         /** UserCreate */
         UserCreate: {
             /** Username */
@@ -857,6 +1038,16 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** VideoPart */
+        VideoPart: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "video";
+            /** Asset Id */
+            asset_id: string;
+        };
         /** WikiSearchResponse */
         WikiSearchResponse: {
             /** Query */
@@ -884,6 +1075,11 @@ export interface components {
             /** Source */
             source: string;
         };
+        /**
+         * WorkflowType
+         * @enum {string}
+         */
+        WorkflowType: "direct_chat" | "grounded_chat" | "agent";
     };
     responses: never;
     parameters: never;
@@ -988,7 +1184,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ChatRequest"];
+                "application/json": components["schemas"]["NormalizedChatRequest"];
             };
         };
         responses: {
@@ -1495,7 +1691,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChatHistoryResponse"];
+                    "application/json": components["schemas"]["ConversationMessagesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1577,7 +1773,47 @@ export interface operations {
             };
         };
     };
-    create_api_key_api_keys__post: {
+    providers_ai_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    connections_ai_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_connection_ai_connections_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1586,17 +1822,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApiKeyCreate"];
+                "application/json": components["schemas"]["ConnectionCreate"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiKeyResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -1610,14 +1846,12 @@ export interface operations {
             };
         };
     };
-    get_user_api_keys_api_keys_user__user_id__get: {
+    get_connection_ai_connections__connection_id__get: {
         parameters: {
-            query?: {
-                include_inactive?: boolean;
-            };
+            query?: never;
             header?: never;
             path: {
-                user_id: number;
+                connection_id: string;
             };
             cookie?: never;
         };
@@ -1629,7 +1863,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiKeyListResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -1643,18 +1877,18 @@ export interface operations {
             };
         };
     };
-    update_api_key_api_keys__api_key_id__put: {
+    update_connection_ai_connections__connection_id__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                api_key_id: number;
+                connection_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApiKeyUpdate"];
+                "application/json": components["schemas"]["ConnectionUpdate"];
             };
         };
         responses: {
@@ -1664,7 +1898,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiKeyResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -1678,14 +1912,170 @@ export interface operations {
             };
         };
     };
-    delete_api_key_api_keys__api_key_id__delete: {
+    delete_connection_ai_connections__connection_id__delete: {
         parameters: {
-            query?: {
-                user_id?: number | null;
-            };
+            query?: never;
             header?: never;
             path: {
-                api_key_id: number;
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_connection_ai_connections__connection_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connection_models_ai_connections__connection_id__models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_models_ai_connections__connection_id__models_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    models_ai_models_get: {
+        parameters: {
+            query?: {
+                connection_id?: string | null;
+                provider?: components["schemas"]["ProviderType"] | null;
+                task_type?: components["schemas"]["ModelTaskType"] | null;
+                input_modality?: components["schemas"]["Modality"] | null;
+                output_modality?: components["schemas"]["Modality"] | null;
+                available_only?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    model_ai_models__model_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_key: string;
             };
             cookie?: never;
         };
@@ -1712,26 +2102,6 @@ export interface operations {
         };
     };
     health_check_health_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_models_models_get: {
         parameters: {
             query?: never;
             header?: never;

@@ -1,5 +1,5 @@
 # backend/app/models.py
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .database import Base
 import datetime
@@ -10,7 +10,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     conversations = relationship("Conversation", back_populates="user")
-    api_keys = relationship("UserApiKey", back_populates="user")
+    provider_connections = relationship("ProviderConnection", back_populates="user", cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBase", back_populates="user")
 
 class Conversation(Base):
@@ -24,33 +24,61 @@ class Conversation(Base):
     
     # 关系
     user = relationship("User", back_populates="conversations")
-    messages = relationship("ChatHistory", back_populates="conversation", cascade="all, delete-orphan")
+    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
 
-class ChatHistory(Base):
-    __tablename__ = 'chat_history'
+class ChatMessage(Base):
+    __tablename__ = 'chat_messages'
     id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(Integer, ForeignKey('conversations.id'), nullable=False)  # 关联到对话
-    timestamp = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
-    message = Column(Text, nullable=False)   # 用户输入
-    response = Column(Text, nullable=False)  # 模型回复
-    model = Column(String(50))               # 模型标识，如 'gpt-3.5-turbo' 或 'llama3'
-    
-    # 关系
+    conversation_id = Column(Integer, ForeignKey('conversations.id'), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    model_key = Column(String(500))
+    content_json = Column(JSON, nullable=False)
+    reasoning_summary_json = Column(JSON)
+    tool_calls_json = Column(JSON)
+    metadata_json = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc), index=True)
     conversation = relationship("Conversation", back_populates="messages")
 
-class UserApiKey(Base):
-    __tablename__ = 'user_api_keys'
-    id = Column(Integer, primary_key=True, index=True)
+class ProviderConnection(Base):
+    __tablename__ = 'provider_connections'
+    id = Column(String(36), primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    provider = Column(String(50), nullable=False)  # 服务提供商，如 'openai', 'anthropic', 'google'
-    api_key = Column(String(500), nullable=False)  # API密钥
-    model_name = Column(String(100))               # 模型名称，如 'gpt-4', 'claude-3'
-    is_active = Column(Boolean, default=True)      # 是否启用
+    provider = Column(String(32), nullable=False, index=True)
+    display_name = Column(String(100), nullable=False)
+    protocol = Column(String(32), nullable=False)
+    region = Column(String(50))
+    base_url = Column(String(500), nullable=False)
+    workspace_id = Column(String(100))
+    encrypted_api_key = Column(Text)
+    credential_version = Column(Integer, nullable=False, default=1)
+    config_json = Column(JSON, nullable=False, default=dict)
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_tested_at = Column(DateTime)
+    last_test_status = Column(String(20))
+    last_test_message = Column(String(240))
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
     updated_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc), onupdate=datetime.datetime.now(datetime.timezone.utc))
-    
-    # 关系
-    user = relationship("User", back_populates="api_keys")
+    user = relationship("User", back_populates="provider_connections")
+    models = relationship("AIModelCache", back_populates="connection", cascade="all, delete-orphan")
+
+class AIModelCache(Base):
+    __tablename__ = 'ai_model_cache'
+    __table_args__ = (UniqueConstraint('connection_id', 'model_id'),)
+    id = Column(Integer, primary_key=True)
+    connection_id = Column(String(36), ForeignKey('provider_connections.id', ondelete='CASCADE'), nullable=False, index=True)
+    model_id = Column(String(300), nullable=False)
+    display_name = Column(String(300), nullable=False)
+    task_types_json = Column(JSON, nullable=False)
+    input_modalities_json = Column(JSON, nullable=False)
+    output_modalities_json = Column(JSON, nullable=False)
+    capabilities_json = Column(JSON, nullable=False)
+    limits_json = Column(JSON, nullable=False)
+    metadata_json = Column(JSON, nullable=False, default=dict)
+    source = Column(String(32), nullable=False)
+    available = Column(Boolean, nullable=False, default=True)
+    fetched_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    connection = relationship("ProviderConnection", back_populates="models")
 
 class KnowledgeBase(Base):
     __tablename__ = 'knowledge_bases'

@@ -42,15 +42,7 @@ export interface MockApiState {
     created_at: string;
     updated_at: string;
   }>;
-  apiKeys: Array<{
-    id: number;
-    user_id: number;
-    provider: string;
-    model_name: string | null;
-    is_active: boolean;
-    created_at: string;
-    updated_at: string;
-  }>;
+  connections: Array<Record<string, unknown>>;
 }
 
 const json = (route: Route, body: unknown, status = 200) =>
@@ -89,7 +81,7 @@ export async function installMockApi(page: Page) {
       },
     ],
     files: [],
-    apiKeys: [],
+    connections: [],
   };
 
   await page.route("**/api/**", async (route) => {
@@ -100,14 +92,8 @@ export async function installMockApi(page: Page) {
     const method = request.method();
 
     if (path === "/health" && method === "GET") return json(route, { status: "ok" });
-    if (path === "/models" && method === "GET") {
-      return json(route, {
-        local_models: ["qwen-local"],
-        online_models: ["deepseek-chat"],
-        all_models: ["qwen-local", "deepseek-chat"],
-        ollama_available: true,
-        ollama_error: null,
-      });
+    if (path === "/ai/models" && method === "GET") {
+      return json(route, [{key:"ollama::local::qwen-local",connection_id:"local",provider:"ollama",id:"qwen-local",display_name:"Qwen Local",source:"local_runtime",available:true,task_types:["chat"],input_modalities:["text"],output_modalities:["text"],capabilities:{streaming:true,reasoning:null,reasoning_toggle:null,reasoning_efforts:[],tools:false,structured_output:false,json_output:false,function_calling:false},limits:{},metadata:{},fetched_at:now,stale:false,vision:false}]);
     }
     if (path === "/auth/me" && method === "GET") {
       return json(route, { user_id: 7, username: "e2e-user" });
@@ -155,8 +141,8 @@ export async function installMockApi(page: Page) {
       return json(route, {
         conversation_id: Number(messagesMatch[1]),
         messages: [
-          { role: "user", content: "如何使用产品搜索？" },
-          { role: "assistant", content: "可以在搜索页选择知识库并输入关键词。" },
+          { role: "user", content: [{type:"text",text:"如何使用产品搜索？"}] },
+          { role: "assistant", content: [{type:"text",text:"可以在搜索页选择知识库并输入关键词。"}], model_key:"ollama::local::qwen-local" },
         ],
       });
     }
@@ -167,9 +153,9 @@ export async function installMockApi(page: Page) {
         contentType: "text/event-stream",
         headers: { "cache-control": "no-cache", "x-accel-buffering": "no" },
         body:
-          'data: {"chunk":"**测试回答**"}\n\n' +
-          'data: {"chunk":"\\n\\n已根据可信来源完成回答。"}\n\n' +
-          'data: {"done":true}\n\n',
+          'data: {"type":"content_delta","content":"**测试回答**"}\n\n' +
+          'data: {"type":"content_delta","content":"\\n\\n已根据可信来源完成回答。"}\n\n' +
+          'data: {"type":"done"}\n\n',
       });
     }
 
@@ -301,38 +287,30 @@ export async function installMockApi(page: Page) {
       });
     }
 
-    if (path === "/api-keys/user/7" && method === "GET") {
-      return json(route, { api_keys: state.apiKeys });
+    if (path === "/ai/connections" && method === "GET") {
+      return json(route, state.connections);
     }
-    if (path === "/api-keys/" && method === "POST") {
-      const body = request.postDataJSON() as { provider: string; model_name: string | null };
-      const key = {
-        id: 801,
-        user_id: 7,
+    if (path === "/ai/connections" && method === "POST") {
+      const body = request.postDataJSON() as { provider: string; display_name: string };
+      const connection = {
+        id: "connection-801",
         provider: body.provider,
-        model_name: body.model_name,
+        display_name: body.display_name,
+        protocol: body.provider === "ollama" ? "ollama" : "openai_compatible",
+        base_url: "https://api.example.invalid",
+        config: {},
         is_active: true,
-        created_at: now,
-        updated_at: now,
+        has_credential: true,
+        masked_credential: "sk-••••ret",
+        credential_version: 1,
       };
-      state.apiKeys.push(key);
-      return json(route, key);
+      state.connections.push(connection);
+      return json(route, connection, 201);
     }
-    const apiKeyMatch = path.match(/^\/api-keys\/(\d+)$/);
-    if (apiKeyMatch && method === "PUT") {
-      const id = Number(apiKeyMatch[1]);
-      const body = request.postDataJSON() as { model_name: string | null; is_active: boolean };
-      const key = state.apiKeys.find((item) => item.id === id);
-      if (!key) return json(route, { detail: "not found" }, 404);
-      key.model_name = body.model_name;
-      key.is_active = body.is_active;
-      key.updated_at = now;
-      return json(route, key);
-    }
-    if (apiKeyMatch && method === "DELETE") {
-      const id = Number(apiKeyMatch[1]);
-      state.apiKeys = state.apiKeys.filter((item) => item.id !== id);
-      return json(route, { message: "deleted" });
+    const connectionAction = path.match(/^\/ai\/connections\/([^/]+)\/(test|models\/refresh)$/);
+    if (connectionAction && method === "POST") {
+      if (connectionAction[2] === "test") return json(route, { ok: true, message: "连接成功" });
+      return json(route, []);
     }
 
     return json(route, { detail: `Unhandled mock endpoint: ${method} ${path}` }, 501);

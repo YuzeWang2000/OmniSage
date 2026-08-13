@@ -23,7 +23,7 @@ export function createConversation(title = "新对话", signal?: AbortSignal) {
 }
 
 export function getConversationMessages(conversationId: number, signal?: AbortSignal) {
-  return apiRequest<ApiSchemas["ChatHistoryResponse"]>({
+  return apiRequest<ApiSchemas["ConversationMessagesResponse"]>({
     method: "GET",
     url: `/conversations/${conversationId}/messages`,
     signal,

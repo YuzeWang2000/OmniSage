@@ -96,6 +96,16 @@ function ChatMessageComponent({ message, onRegenerate, onRetry }: ChatMessagePro
       >
         {assistant ? (
           <>
+            {message.reasoning && (
+              <details className="mb-3 rounded-xl border bg-[#f8faf9] p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-muted">
+                  推理过程（仅本次流式展示，不写入历史）
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted">
+                  {message.reasoning}
+                </p>
+              </details>
+            )}
             {message.content ? (
               <SafeMarkdown content={message.content} />
             ) : fallback ? (

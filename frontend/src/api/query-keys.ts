@@ -2,6 +2,7 @@ export const queryKeys = {
   system: {
     health: ["system", "health"] as const,
     models: ["system", "models"] as const,
+    chatModels: ["system", "models", "chat"] as const,
   },
   conversations: {
     all: (userId: number) => ["conversations", userId] as const,
@@ -16,7 +17,7 @@ export const queryKeys = {
   },
   settings: {
     wiki: ["settings", "wiki"] as const,
-    apiKeys: (userId: number) => ["settings", "api-keys", userId] as const,
+    connections: ["settings", "connections"] as const,
   },
   search: {
     results: (source: "wiki" | "knowledge", target: number | null, query: string) =>

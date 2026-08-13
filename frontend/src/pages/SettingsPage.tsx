@@ -1,5 +1,5 @@
 import { PageHeading } from "@/components/common/page-heading";
-import { ApiKeySettings } from "@/features/settings/api-key-settings";
+import { ProviderConnections } from "@/features/settings/provider-connections";
 import { PreferencesForm } from "@/features/settings/preferences-form";
 import { WikiSettings } from "@/features/settings/wiki-settings";
 
@@ -17,7 +17,7 @@ export default function SettingsPage() {
           <WikiSettings />
         </div>
         <div className="min-w-0">
-          <ApiKeySettings />
+          <ProviderConnections />
         </div>
       </div>
     </div>

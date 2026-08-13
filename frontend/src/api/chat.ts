@@ -4,14 +4,14 @@ import { ApiError, apiClient } from "@/api/client";
 import type { ApiSchemas } from "@/api/types";
 
 export interface ChatStreamEvent {
-  chunk?: string;
-  done?: boolean;
-  error?: string;
+  type: "content_delta" | "reasoning_delta" | "tool_call" | "tool_result" | "citation" | "media" | "usage" | "done" | "error";
+  content?: string; code?: string; message?: string;
 }
 
 interface StreamChatOptions {
   signal?: AbortSignal;
   onChunk: (chunk: string) => void;
+  onReasoning?: (chunk: string) => void;
 }
 
 const parseTimeout = () => {
@@ -35,13 +35,13 @@ function parseEvent(frame: string): ChatStreamEvent | null {
 }
 
 export async function streamChat(
-  payload: ApiSchemas["ChatRequest"],
-  { signal, onChunk }: StreamChatOptions,
+  payload: ApiSchemas["NormalizedChatRequest"],
+  { signal, onChunk, onReasoning }: StreamChatOptions,
 ) {
   const response = await apiClient.request<
     ReadableStream<Uint8Array>,
     AxiosResponse<ReadableStream<Uint8Array>>,
-    ApiSchemas["ChatRequest"]
+    ApiSchemas["NormalizedChatRequest"]
   >({
     method: "POST",
     url: "/chat/stream",
@@ -63,9 +63,10 @@ export async function streamChat(
 
   const handleEvent = (event: ChatStreamEvent | null) => {
     if (!event) return;
-    if (event.error) throw new ApiError(event.error, { kind: "server" });
-    if (event.chunk) onChunk(event.chunk);
-    if (event.done) completed = true;
+    if (event.type === "error") throw new ApiError(event.message || "回答生成失败", { kind: "server" });
+    if (event.type === "content_delta" && event.content) onChunk(event.content);
+    if (event.type === "reasoning_delta" && event.content) onReasoning?.(event.content);
+    if (event.type === "done") completed = true;
   };
 
   try {

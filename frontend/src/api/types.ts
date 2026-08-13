@@ -11,4 +11,3 @@ export type KnowledgeBase = ApiSchemas["KnowledgeBaseResponse"];
 export type KnowledgeBaseStats = ApiSchemas["KnowledgeBaseStats"];
 export type KnowledgeFile = ApiSchemas["KnowledgeFileResponse"];
 export type SearchResult = ApiSchemas["KnowledgeBaseSearchResult"];
-export type ApiKey = ApiSchemas["ApiKeyResponse"];
