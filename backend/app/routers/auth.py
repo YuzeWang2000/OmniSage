@@ -1,4 +1,7 @@
 # backend/app/routers/auth.py
+"""
+register, login, me
+"""
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +24,9 @@ def get_db():
         db.close()
 
 def verify_password(plain_password, hashed_password):
+    """
+    验证密码是否正确
+    """
     try:
         return bcrypt.checkpw(
             plain_password.encode("utf-8"),

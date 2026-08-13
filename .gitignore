@@ -32,7 +32,7 @@ venv.bak/
 
 # UV specific
 .venv/
-uv.lock
+/frontend-legacy/uv.lock
 
 # Node / pnpm
 node_modules/

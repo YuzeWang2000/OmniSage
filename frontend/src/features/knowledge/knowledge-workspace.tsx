@@ -8,6 +8,7 @@ import {
   createKnowledgeBase,
   deleteKnowledgeBase as removeKnowledgeBase,
   getKnowledgeBases,
+  updateKnowledgeBase,
 } from "@/api/knowledge";
 import { queryKeys } from "@/api/query-keys";
 import type { KnowledgeBase } from "@/api/types";
@@ -85,6 +86,16 @@ export function KnowledgeWorkspace() {
       void queryClient.invalidateQueries({ queryKey: ["knowledge"] });
     },
   });
+  const updateKnowledge = useMutation({
+    mutationFn: ({ id, name, description }: { id: number; name: string; description: string | null }) =>
+      updateKnowledgeBase(id, { name, description }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<KnowledgeBase[]>(queryKeys.knowledge.all(userId), (current = []) =>
+        current.map((item) => item.id === updated.id ? updated : item),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
 
   const selected = knowledgeBases.data?.find(({ id }) => id === selectedId);
   const createError = createKnowledge.error
@@ -92,6 +103,9 @@ export function KnowledgeWorkspace() {
     : null;
   const deleteError = deleteKnowledge.error
     ? errorMessage(deleteKnowledge.error, "知识库删除失败，请重试")
+    : null;
+  const updateError = updateKnowledge.error
+    ? errorMessage(updateKnowledge.error, "知识库更新失败，请重试")
     : null;
 
   return (
@@ -133,6 +147,11 @@ export function KnowledgeWorkspace() {
               deletingKnowledgeBase={deleteKnowledge.isPending}
               deleteKnowledgeBaseError={deleteError}
               onDeleteKnowledgeBase={() => deleteKnowledge.mutate(selected.id)}
+              updatingKnowledgeBase={updateKnowledge.isPending}
+              updateKnowledgeBaseError={updateError}
+              onUpdateKnowledgeBase={(name, description) =>
+                updateKnowledge.mutateAsync({ id: selected.id, name, description })
+              }
             />
           ) : knowledgeBases.isPending ? null : (
             <div className="rounded-2xl border bg-surface shadow-xs">

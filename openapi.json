@@ -335,6 +335,61 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "rag"
+        ],
+        "summary": "Update Knowledge Base",
+        "operationId": "update_knowledge_base_rag_knowledge_bases__knowledge_base_id__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "knowledge_base_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Knowledge Base Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeBaseUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/rag/knowledge-bases/{knowledge_base_id}/files": {
@@ -2305,12 +2360,15 @@
           },
           "name": {
             "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
             "title": "Name"
           },
           "description": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 500
               },
               {
                 "type": "null"
@@ -2320,6 +2378,8 @@
           },
           "embedding_model": {
             "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
             "title": "Embedding Model",
             "default": "nomic-embed-text"
           }
@@ -2545,6 +2605,33 @@
           "active_knowledge_bases"
         ],
         "title": "KnowledgeBaseStats"
+      },
+      "KnowledgeBaseUpdate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "KnowledgeBaseUpdate"
       },
       "KnowledgeFileListResponse": {
         "properties": {

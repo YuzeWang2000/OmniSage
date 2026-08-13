@@ -1,6 +1,6 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, File, FileText, RefreshCcw, Trash2 } from "lucide-react";
+import { Database, File, FileText, Pencil, RefreshCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { ApiError } from "@/api/client";
@@ -12,6 +12,7 @@ import { QueryError } from "@/components/common/query-error";
 import { StatusMessage } from "@/components/common/status-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileUploader } from "@/features/knowledge/file-uploader";
 import { formatDate, formatFileSize } from "@/utils/format";
@@ -21,6 +22,9 @@ interface KnowledgeDetailProps {
   deletingKnowledgeBase: boolean;
   deleteKnowledgeBaseError?: string | null;
   onDeleteKnowledgeBase: () => void;
+  updatingKnowledgeBase: boolean;
+  updateKnowledgeBaseError?: string | null;
+  onUpdateKnowledgeBase: (name: string, description: string | null) => Promise<unknown>;
 }
 
 export function KnowledgeDetail({
@@ -28,10 +32,16 @@ export function KnowledgeDetail({
   deletingKnowledgeBase,
   deleteKnowledgeBaseError,
   onDeleteKnowledgeBase,
+  updatingKnowledgeBase,
+  updateKnowledgeBaseError,
+  onUpdateKnowledgeBase,
 }: KnowledgeDetailProps) {
   const queryClient = useQueryClient();
   const [deleteFileTarget, setDeleteFileTarget] = useState<KnowledgeFile | null>(null);
   const [deleteKnowledgeOpen, setDeleteKnowledgeOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(knowledgeBase.name);
+  const [description, setDescription] = useState(knowledgeBase.description || "");
   const files = useQuery({
     queryKey: queryKeys.knowledge.files(knowledgeBase.id),
     queryFn: ({ signal }) => getKnowledgeFiles(knowledgeBase.id, signal),
@@ -66,9 +76,56 @@ export function KnowledgeDetail({
                 {knowledgeBase.is_active ? "可用" : "停用"}
               </Badge>
             </div>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted">
-              {knowledgeBase.description || "暂无描述"}
-            </p>
+            {editing ? (
+              <form
+                className="mt-4 space-y-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const normalizedName = name.trim();
+                  if (!normalizedName) return;
+                  void onUpdateKnowledgeBase(normalizedName, description.trim() || null)
+                    .then(() => setEditing(false))
+                    .catch(() => undefined);
+                }}
+              >
+                <Input
+                  aria-label="知识库名称"
+                  value={name}
+                  maxLength={100}
+                  onChange={(event) => setName(event.target.value)}
+                  autoFocus
+                />
+                <textarea
+                  aria-label="知识库描述"
+                  value={description}
+                  maxLength={500}
+                  rows={3}
+                  onChange={(event) => setDescription(event.target.value)}
+                  className="w-full resize-y rounded-xl border bg-surface px-3.5 py-3 text-sm outline-none focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/15"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" size="sm" disabled={updatingKnowledgeBase || !name.trim()}>
+                    {updatingKnowledgeBase ? "正在保存" : "保存"}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setName(knowledgeBase.name);
+                      setDescription(knowledgeBase.description || "");
+                      setEditing(false);
+                    }}
+                  >
+                    取消
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted">
+                {knowledgeBase.description || "暂无描述"}
+              </p>
+            )}
             <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted">
               <span>{knowledgeBase.file_count} 个文件</span>
               <span>{knowledgeBase.document_count} 个文档块</span>
@@ -76,16 +133,31 @@ export function KnowledgeDetail({
               <span>更新于 {formatDate(knowledgeBase.updated_at)}</span>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-start text-danger"
-            onClick={() => setDeleteKnowledgeOpen(true)}
-          >
-            <Trash2 className="size-3.5" aria-hidden="true" />
-            删除知识库
-          </Button>
+          <div className="flex shrink-0 flex-wrap gap-2 self-start">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditing(true)}
+            >
+              <Pencil className="size-3.5" aria-hidden="true" />
+              重命名
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-danger"
+              onClick={() => setDeleteKnowledgeOpen(true)}
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              删除知识库
+            </Button>
+          </div>
         </div>
+        {updateKnowledgeBaseError && (
+          <StatusMessage className="mt-4" tone="error">
+            {updateKnowledgeBaseError}
+          </StatusMessage>
+        )}
         {deleteKnowledgeBaseError && (
           <StatusMessage className="mt-4" tone="error">
             {deleteKnowledgeBaseError}

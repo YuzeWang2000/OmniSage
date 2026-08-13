@@ -103,7 +103,7 @@ const standardError = (data: unknown) => {
   };
 };
 
-const apiErrorFromAxios = (error: AxiosError): ApiError => {
+const apiErrorFromAxios = (error: AxiosError, preserveAuthDetail = false): ApiError => {
   if (axios.isCancel(error) || error.code === "ERR_CANCELED") {
     return new ApiError("请求已取消", { kind: "cancelled", cause: error });
   }
@@ -128,6 +128,14 @@ const apiErrorFromAxios = (error: AxiosError): ApiError => {
           status,
           kind: "forbidden",
           code: backendError.code,
+          cause: error,
+        });
+      }
+      if (preserveAuthDetail) {
+        return new ApiError(detail || "用户名或密码错误", {
+          status,
+          kind: "unauthorized",
+          code: backendError?.code,
           cause: error,
         });
       }
@@ -211,8 +219,8 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    const apiError = apiErrorFromAxios(error);
     const requestConfig = error.config as ApiRequestConfig | undefined;
+    const apiError = apiErrorFromAxios(error, Boolean(requestConfig?.skipAuthFailure));
     if (
       apiError.status === 401 && apiError.kind === "unauthorized" &&
       !requestConfig?.skipAuthFailure &&

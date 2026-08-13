@@ -27,6 +27,26 @@ class DatabaseService:
         except Exception as e:
             logger.error("获取聊天历史失败")
             return []
+
+    @staticmethod
+    def build_chat_context(conversation_id: int, incoming_messages: list, regenerate: bool, db: Session) -> list:
+        """Build provider context from trusted persisted history plus this request.
+
+        The client only supplies the new turn. Persisted history is loaded on the
+        server so a caller cannot inject or rewrite older conversation turns.
+        """
+        from ..ai.contracts.messages import NormalizedMessage
+
+        history = [NormalizedMessage.model_validate(item) for item in DatabaseService.get_chat_history(
+            conversation_id, db, limit=settings.MAX_HISTORY_LENGTH,
+        )]
+        incoming = list(incoming_messages)
+        if regenerate:
+            if history and history[-1].role == "assistant":
+                history.pop()
+            if history and incoming and history[-1].role == "user" and history[-1].text() == incoming[0].text():
+                history.pop()
+        return [*history, *incoming]
     
     @staticmethod
     def save_chat_history(conversation_id: int, messages: list, response: str, model_key: str, db: Session) -> bool:

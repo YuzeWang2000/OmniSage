@@ -1,9 +1,9 @@
 FROM node:22-alpine AS build
 
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@11.16.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.21.0 --activate
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY index.html tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts ./

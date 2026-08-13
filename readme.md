@@ -117,7 +117,7 @@ OmniSage 当前适用于：
 | 多模态 ContentPart | 仅预留契约 | 当前 Provider 调用只完整支持文本 |
 | 在线 Embedding/Rerank | 未实现 | 只有请求契约和扩展边界 |
 | TTS/STT、图像与视频 | 未实现 | 无 Asset 服务、调用路由或前端入口 |
-| Docker Compose | 当前不可直接使用 | 见“Docker 状态” |
+| Docker Compose | 配置已修复，待环境验证 | 当前审查环境无 Docker CLI，尚未完成实际镜像 smoke test |
 
 ## 技术栈
 
@@ -152,7 +152,7 @@ OmniSage 当前适用于：
 - Nginx
 - Docker Compose
 
-请注意：部署相关文件已经存在，但当前 Docker 前端镜像存在已知构建问题，不能视为可直接运行的发布方案。
+部署相关的已知构建输入问题已经修复；由于当前环境没有 Docker CLI，仍需在具备 Docker 的环境执行实际构建和 smoke test。
 
 ## 系统架构
 
@@ -269,6 +269,10 @@ backend/wiki_data/
 | `SEARCH_MIN_SCORE` | `0.35` | 知识库独立搜索的最低相关度 |
 | `SEARCH_SCORE_MARGIN` | `0.18` | 相对最佳结果的动态阈值差 |
 | `SEARCH_CANDIDATE_MULTIPLIER` | `3` | 搜索候选数相对 `top_k` 的倍数 |
+| `WIKI_CONNECT_TIMEOUT_SECONDS` | `3` | Wiki HTTP 请求的连接超时，单位为秒 |
+| `WIKI_READ_TIMEOUT_SECONDS` | `10` | Wiki HTTP 请求的读取超时，单位为秒 |
+| `RAG_WORKER_LIMIT` | `4` | 文档处理、Chroma 与 Wiki 阻塞任务的最大并发 worker 数 |
+| `VECTOR_WRITE_BATCH_SIZE` | `32` | 单次写入 Chroma 的文档块数量，避免大文件一次性嵌入造成请求或内存峰值 |
 
 `JWT_SECRET_KEY` 未配置时，后端会在每次进程启动时生成临时密钥。这只适合单进程本地开发，重启后现有 Token 将失效，多进程实例之间也无法共享登录状态。
 
@@ -394,13 +398,7 @@ pnpm build
 - MySQL 与 Ollama 命名卷
 - 上传、Chroma 和 Wiki 的宿主目录挂载
 
-但当前版本不能作为已验证的 Docker 启动方式：
-
-1. `frontend/Dockerfile` 执行 `COPY ... .npmrc ./`，仓库中不存在 `frontend/.npmrc`，前端镜像会在复制阶段失败。
-2. Compose 将 Wiki 数据挂载到 `/data/wiki_data`，但 `WikiService` 当前使用相对路径 `wiki_data`，没有使用 `DATA_DIR`，容器中的实际访问路径不一致。
-3. 当前环境没有 Docker CLI，因此没有完成镜像构建验证。
-
-在上述问题修复并完成实际构建测试前，不建议执行 `docker compose up --build` 或把 Compose 描述为开箱即用。
+当前已修复前端 Dockerfile 对不存在 `.npmrc` 的引用、提交后端 `uv.lock`，并在 `.env.example` 补齐 Compose 必需的 MySQL 变量。当前环境没有 Docker CLI，因此尚未完成镜像构建与运行验证；发布前仍应在干净环境执行 `docker compose config`、`docker compose build` 和核心 smoke test。
 
 ## AI Provider 配置
 
@@ -670,9 +668,9 @@ pnpm.cmd dev
 
 也可以按组织安全策略调整 PowerShell Execution Policy。
 
-### Docker 构建失败并提示 `.npmrc` 不存在
+### Docker 构建或启动失败
 
-这是当前 `frontend/Dockerfile` 的已知问题，不是本地配置遗漏。需要先修改 Dockerfile 或将项目实际需要的 `.npmrc` 纳入仓库，再验证 Compose。
+先确认已从 `.env.example` 配置四个 MySQL 变量和两项应用密钥，再执行 `docker compose config`。当前仓库已不再要求 `frontend/.npmrc`。
 
 ## 安全注意事项
 
@@ -695,7 +693,7 @@ pnpm.cmd dev
 - 没有 Alembic 或自动数据库迁移。
 - 旧数据库结构不能自动迁移到当前 Provider/消息模型。
 - PostgreSQL 未配置或验证。
-- Docker Compose 当前不能直接成功构建。
+- Docker Compose 配置已修复，但尚未在本次审查环境完成实际构建验证。
 - Wiki 数据路径没有完整遵循 `DATA_DIR`。
 - Wiki 离线数据不随仓库提供，初始化流程未纳入测试。
 - 在线 Embedding、在线 Rerank 未实现。
@@ -745,7 +743,7 @@ pnpm.cmd dev
 - 正式的源码仓库 URL、Issue Tracker、维护者联系方式和贡献流程。
 - 当前版本应标记为 `0.1.0`、`1.0.0`，还是其他发布版本；后端包版本与 FastAPI API 版本目前不一致。
 - 是否计划正式支持 PostgreSQL。
-- Docker 前端缺失 `.npmrc` 是应删除复制指令，还是有文件尚未纳入仓库。
+- 在具备 Docker CLI 的 Linux/Windows 环境完成 Compose 构建与运行 smoke test。
 - Wiki 数据应统一放在 `DATA_DIR/wiki_data`，还是继续使用工作目录下的 `wiki_data`。
 - 离线 Wiki 所需 JSONL 的正式来源、格式、许可、推荐规模和初始化流程。
 - 是否计划让 grounded chat 真正启用本地 Reranker。

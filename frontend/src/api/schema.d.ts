@@ -133,7 +133,8 @@ export interface paths {
         delete: operations["delete_knowledge_base_rag_knowledge_bases__knowledge_base_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Knowledge Base */
+        patch: operations["update_knowledge_base_rag_knowledge_bases__knowledge_base_id__patch"];
         trace?: never;
     };
     "/rag/knowledge-bases/{knowledge_base_id}/files": {
@@ -831,6 +832,13 @@ export interface components {
             /** Active Knowledge Bases */
             active_knowledge_bases: number;
         };
+        /** KnowledgeBaseUpdate */
+        KnowledgeBaseUpdate: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+        };
         /** KnowledgeFileListResponse */
         KnowledgeFileListResponse: {
             /** Files */
@@ -1295,6 +1303,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_knowledge_base_rag_knowledge_bases__knowledge_base_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                knowledge_base_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeBaseResponse"];
                 };
             };
             /** @description Validation Error */

@@ -1,5 +1,5 @@
 # backend/app/schemas.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -60,9 +60,39 @@ class ConversationMessagesResponse(BaseModel):
 # 知识库相关schemas
 class KnowledgeBaseCreate(BaseModel):
     user_id: Optional[int] = None
-    name: str
-    description: Optional[str] = None
-    embedding_model: str = "nomic-embed-text"
+    name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    embedding_model: str = Field(default="nomic-embed-text", min_length=1, max_length=200)
+
+    @field_validator("name", "embedding_model", mode="before")
+    @classmethod
+    def normalize_required_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value):
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        return value or None
+
+class KnowledgeBaseUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_description(cls, value):
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        return value or None
 
 class KnowledgeBaseResponse(BaseModel):
     id: int

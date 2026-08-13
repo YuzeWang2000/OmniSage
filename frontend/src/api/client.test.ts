@@ -73,6 +73,19 @@ describe("API 401 handling", () => {
     expect(redirect).not.toHaveBeenCalled();
   });
 
+  it("preserves the safe backend message for a failed login", async () => {
+    await expect(apiRequest({
+      method: "POST",
+      url: "/auth/login",
+      skipAuthFailure: true,
+      adapter: rejectedAdapter(401, { detail: "用户名或密码错误" }),
+    })).rejects.toMatchObject({
+      kind: "unauthorized",
+      status: 401,
+      message: "用户名或密码错误",
+    } satisfies Partial<ApiError>);
+  });
+
   it("maps the current provider credential response without logging out", async () => {
     const redirect = vi.fn();
     setSessionRedirectHandler(redirect);

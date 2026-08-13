@@ -9,6 +9,8 @@
 import logging
 import os
 import shutil
+import uuid
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -34,6 +36,10 @@ SUPPORTED_FILE_EXTENSIONS = {"pdf", "txt", "md", "doc", "docx"}
 logger = logging.getLogger(__name__)
 
 
+class VectorStoreWriteError(RuntimeError):
+    """A safe, actionable summary of an embedding or vector-store failure."""
+
+
 class KnowledgeBaseService:
     """
     知识库服务类
@@ -42,8 +48,8 @@ class KnowledgeBaseService:
     """
     
     def __init__(self):
-        self.base_upload_dir = os.path.join(os.getcwd(), settings.UPLOAD_DIR)
-        self.base_vector_dir = os.path.join(os.getcwd(), settings.VECTOR_DB_PATH)
+        self.base_upload_dir = str(Path(os.getcwd(), settings.UPLOAD_DIR).resolve())
+        self.base_vector_dir = str(Path(os.getcwd(), settings.VECTOR_DB_PATH).resolve())
         
         # 确保基础目录存在
         os.makedirs(self.base_upload_dir, exist_ok=True)
@@ -51,6 +57,43 @@ class KnowledgeBaseService:
         
         # 初始化优化的RAG Chain服务
         self.rag_chain_service = OptimizedRAGChainService()
+
+    @staticmethod
+    def _path_within(root: str, *parts: str) -> Path:
+        root_path = Path(root).resolve()
+        candidate = root_path.joinpath(*parts).resolve()
+        if candidate == root_path or not candidate.is_relative_to(root_path):
+            raise ValueError("storage path escaped its configured data root")
+        return candidate
+
+    def _upload_dir(self, user_id: int, knowledge_base_id: int) -> Path:
+        return self._path_within(self.base_upload_dir, f"user_{user_id}", f"kb_{knowledge_base_id}")
+
+    def _vector_dir(self, user_id: int, knowledge_base_id: int) -> Path:
+        return self._path_within(self.base_vector_dir, f"user_{user_id}", f"kb_{knowledge_base_id}")
+
+    @staticmethod
+    def _validated_stored_path(root: str, value: str | None) -> Path | None:
+        if not value:
+            return None
+        root_path = Path(root).resolve()
+        candidate = Path(value).resolve()
+        if candidate == root_path or not candidate.is_relative_to(root_path):
+            raise ValueError("stored path is outside its configured data root")
+        return candidate
+
+    @staticmethod
+    def _quarantine(path: Path) -> Path | None:
+        if not path.exists():
+            return None
+        target = path.with_name(f".{path.name}.deleting-{uuid.uuid4().hex}")
+        path.rename(target)
+        return target
+
+    @staticmethod
+    def _restore_quarantine(quarantine: Path | None, original: Path) -> None:
+        if quarantine and quarantine.exists() and not original.exists():
+            quarantine.rename(original)
     
     def create_knowledge_base(self, user_id: int, name: str, description: str = None, 
                             embedding_model: str = "nomic-embed-text", db: Session = None) -> Dict[str, Any]:
@@ -76,27 +119,28 @@ class KnowledgeBaseService:
                     "message": f"知识库名称 '{name}' 已存在"
                 }
             
-            # 创建知识库目录
-            kb_dir = os.path.join(self.base_upload_dir, f"user_{user_id}", f"kb_{name}")
-            vector_dir = os.path.join(self.base_vector_dir, f"user_{user_id}", f"kb_{name}")
-            os.makedirs(kb_dir, exist_ok=True)
-            os.makedirs(vector_dir, exist_ok=True)
-            
-            # 创建知识库记录
-            knowledge_base = DatabaseService.create_knowledge_base(
-                user_id=user_id,
-                name=name,
-                description=description,
-                embedding_model=embedding_model,
-                vector_db_path=vector_dir,
-                db=db
+            # Persist first only far enough to obtain an immutable id. Display
+            # names never participate in filesystem paths.
+            knowledge_base = KnowledgeBase(
+                user_id=user_id, name=name, description=description,
+                embedding_model=embedding_model, file_count=0,
+                document_count=0, is_active=True,
             )
+            db.add(knowledge_base)
+            db.flush()
+            kb_dir = self._upload_dir(user_id, knowledge_base.id)
+            vector_dir = self._vector_dir(user_id, knowledge_base.id)
+            kb_dir.mkdir(parents=True, exist_ok=False)
+            vector_dir.mkdir(parents=True, exist_ok=False)
+            knowledge_base.vector_db_path = str(vector_dir)
+            knowledge_base_id = knowledge_base.id
+            db.commit()
             
             if knowledge_base:
                 return {
                     "success": True,
                     "message": f"知识库 '{name}' 创建成功",
-                    "knowledge_base_id": knowledge_base.id
+                    "knowledge_base_id": knowledge_base_id
                 }
             else:
                 return {
@@ -104,7 +148,15 @@ class KnowledgeBaseService:
                     "message": "知识库创建失败"
                 }
                 
-        except Exception as e:
+        except Exception:
+            db.rollback()
+            for created in (locals().get("kb_dir"), locals().get("vector_dir")):
+                if isinstance(created, Path) and created.exists():
+                    try:
+                        shutil.rmtree(created)
+                    except OSError:
+                        logger.exception("清理创建失败的知识库目录失败")
+            logger.exception("创建知识库失败")
             return {
                 "success": False,
                 "message": "创建知识库失败"
@@ -157,16 +209,17 @@ class KnowledgeBaseService:
             unique_filename = f"{timestamp}_{actual_filename}"
             
             # 保存文件
-            kb_upload_dir = os.path.join(self.base_upload_dir, f"user_{user_id}", f"kb_{knowledge_base.name}")
-            file_path = os.path.join(kb_upload_dir, unique_filename)
+            kb_upload_dir = self._upload_dir(user_id, knowledge_base.id)
+            kb_upload_dir.mkdir(parents=True, exist_ok=True)
+            file_path = self._path_within(str(kb_upload_dir), unique_filename)
             
             total_size = 0
-            with open(file_path, "wb") as destination:
+            with file_path.open("wb") as destination:
                 while chunk := file.file.read(1024 * 1024):
                     total_size += len(chunk)
                     if total_size > settings.MAX_FILE_SIZE:
                         destination.close()
-                        os.remove(file_path)
+                        file_path.unlink()
                         return {
                             "success": False,
                             "message": f"文件大小超过限制 ({settings.MAX_FILE_SIZE / 1024 / 1024:g}MB)",
@@ -177,60 +230,111 @@ class KnowledgeBaseService:
             documents = self._process_document(file_path, file_extension)
             print(f"处理后的文档数量: {len(documents)}")
             if not documents:
-                os.remove(file_path)
+                file_path.unlink()
                 return {
                     "success": False,
                     "message": "文档处理失败: 未能提取有效内容"
                 }
             
-            # 添加到向量数据库
-            success = self._add_documents_to_vectorstore(documents, knowledge_base.vector_db_path, knowledge_base.embedding_model)
+            # Create a pending SQL row and use its immutable id as the vector
+            # ownership key. SQL is committed only after vector insertion.
+            knowledge_file = KnowledgeFile(
+                knowledge_base_id=knowledge_base_id,
+                filename=unique_filename,
+                original_filename=original_filename,
+                file_path=str(file_path),
+                file_size=file_path.stat().st_size,
+                file_type=file_extension,
+                document_count=len(documents),
+                is_processed=False,
+            )
+            db.add(knowledge_file)
+            db.flush()
+            for index, document in enumerate(documents):
+                document.metadata = {
+                    **(document.metadata or {}),
+                    "file_id": str(knowledge_file.id),
+                    "chunk_index": index,
+                    "original_filename": original_filename,
+                }
+            success = self._add_documents_to_vectorstore(
+                documents, knowledge_base.vector_db_path,
+                knowledge_base.embedding_model, knowledge_file.id,
+            )
             if not success:
-                os.remove(file_path)
+                self._delete_vectors_from_chroma(
+                    knowledge_base.vector_db_path, knowledge_file.id,
+                )
+                db.rollback()
+                file_path.unlink(missing_ok=True)
                 return {
                     "success": False,
                     "message": "向量化处理失败"
                 }
-            
-            # 保存文件记录到数据库
-            knowledge_file = DatabaseService.create_knowledge_file(
-                knowledge_base_id=knowledge_base_id,
-                filename=unique_filename,
-                original_filename=original_filename,
-                file_path=file_path,
-                file_size=os.path.getsize(file_path),
-                file_type=file_extension,
-                document_count=len(documents),
-                is_processed=True,
-                db=db
-            )
-            
-            if knowledge_file:
-                # 更新知识库统计信息
-                DatabaseService.update_knowledge_base_stats(knowledge_base_id, db)
+
+            knowledge_file.is_processed = True
+            knowledge_base.file_count += 1
+            knowledge_base.document_count += len(documents)
+            knowledge_file_id = knowledge_file.id
+            db.commit()
+            return {
+                "success": True,
+                "message": f"文件 '{original_filename}' 上传成功并已向量化",
+                "chunks": len(documents),
+                "file_id": knowledge_file_id
+            }
                 
-                return {
-                    "success": True,
-                    "message": f"文件 '{original_filename}' 上传成功并已向量化",
-                    "chunks": len(documents),
-                    "file_id": knowledge_file.id
-                }
-            else:
-                os.remove(file_path)
-                return {
-                    "success": False,
-                    "message": "文件记录保存失败"
-                }
-                
-        except Exception as e:
+        except VectorStoreWriteError as exc:
+            file_id = getattr(locals().get("knowledge_file"), "id", None)
+            if file_id and locals().get("knowledge_base"):
+                self._delete_vectors_from_chroma(knowledge_base.vector_db_path, file_id)
+            db.rollback()
+            if "file_path" in locals():
+                Path(file_path).unlink(missing_ok=True)
+            logger.exception("文件向量化失败")
+            return {"success": False, "message": str(exc)}
+        except Exception:
+            file_id = getattr(locals().get("knowledge_file"), "id", None)
+            if file_id and locals().get("knowledge_base"):
+                self._delete_vectors_from_chroma(knowledge_base.vector_db_path, file_id)
+            db.rollback()
             # 清理临时文件
-            if 'file_path' in locals() and os.path.exists(file_path):
+            if 'file_path' in locals() and Path(file_path).exists():
                 try:
-                    os.remove(file_path)
-                except:
-                    pass
-            logger.error("文件上传或索引失败")
+                    Path(file_path).unlink()
+                except OSError:
+                    logger.exception("清理失败的上传文件失败")
+            logger.exception("文件上传或索引失败")
             return {"success": False, "message": "文件上传或索引失败"}
+
+    def update_knowledge_base(
+        self,
+        knowledge_base_id: int,
+        user_id: int,
+        name: str,
+        description: Optional[str],
+        db: Session,
+    ) -> Dict[str, Any]:
+        """Update display metadata without moving the immutable ID-based data paths."""
+        knowledge_base = DatabaseService.get_knowledge_base_by_id(
+            knowledge_base_id, user_id, db,
+        )
+        if not knowledge_base:
+            return {"success": False, "status": 404, "message": "知识库不存在"}
+        duplicate = DatabaseService.get_knowledge_base_by_name(user_id, name, db)
+        if duplicate and duplicate.id != knowledge_base_id:
+            return {"success": False, "status": 409, "message": f"知识库名称 '{name}' 已存在"}
+        try:
+            knowledge_base.name = name
+            knowledge_base.description = description
+            knowledge_base.updated_at = datetime.now()
+            db.commit()
+            db.refresh(knowledge_base)
+            return {"success": True, "knowledge_base": knowledge_base}
+        except Exception:
+            db.rollback()
+            logger.exception("更新知识库失败")
+            return {"success": False, "status": 500, "message": "更新知识库失败"}
     
     def get_rag_context(self, user_id: int, message: str, top_k: int = 3, db: Session = None) -> str:
         """
@@ -329,7 +433,7 @@ class KnowledgeBaseService:
             logger.error("文档处理失败")
             return []
     
-    def _add_documents_to_vectorstore(self, documents: List[Document], vector_db_path: str, embedding_model: str) -> bool:
+    def _add_documents_to_vectorstore(self, documents: List[Document], vector_db_path: str, embedding_model: str, file_id: int) -> bool:
         """将文档添加到指定知识库的向量数据库"""
         try:
             embeddings = OllamaEmbeddings(
@@ -342,11 +446,36 @@ class KnowledgeBaseService:
             )
             
             if documents:
-                vectorstore.add_documents(documents)
+                sanitized = []
+                for document in documents:
+                    document.metadata = {
+                        str(key): value
+                        for key, value in (document.metadata or {}).items()
+                        if value is not None and isinstance(value, (str, int, float, bool))
+                    }
+                    sanitized.append(document)
+                batch_size = settings.VECTOR_WRITE_BATCH_SIZE
+                for start in range(0, len(sanitized), batch_size):
+                    batch = sanitized[start:start + batch_size]
+                    vectorstore.add_documents(
+                        batch,
+                        ids=[
+                            f"file-{file_id}-chunk-{index}"
+                            for index in range(start, start + len(batch))
+                        ],
+                    )
                 logger.info("成功添加 %s 条文档到向量数据库", len(documents))
                 return True
-        except Exception as e:
-            logger.error("添加文档到向量数据库失败")
+        except Exception as exc:
+            logger.exception("添加文档到向量数据库失败")
+            message = str(exc).lower()
+            if "connect" in message or "connection" in message:
+                detail = "无法连接 Ollama，请确认服务已启动且 OLLAMA_BASE_URL 配置正确"
+            elif "not found" in message or ("model" in message and "missing" in message):
+                detail = f"嵌入模型 {embedding_model} 不可用，请先执行 ollama pull {embedding_model}"
+            else:
+                detail = "向量化处理失败，请检查后端日志中的具体 Ollama/Chroma 错误"
+            raise VectorStoreWriteError(detail) from exc
         return False
     
     def search_knowledge_base(
@@ -359,6 +488,7 @@ class KnowledgeBaseService:
     ) -> Dict[str, Any]:
         """检索知识库并返回经过动态阈值过滤的结构化引用结果。"""
         try:
+            vector_db_path = str(self._validated_stored_path(self.base_vector_dir, vector_db_path))
             embeddings = OllamaEmbeddings(
                 model=embedding_model,
                 base_url=settings.OLLAMA_BASE_URL,
@@ -428,58 +558,49 @@ class KnowledgeBaseService:
                 "请确认 Ollama 服务可访问且模型已安装。"
             )
     
-    def _delete_vectors_from_chroma(self, vector_db_path: str, filename: str) -> bool:
-        """从ChromaDB中删除指定文件的向量数据"""
+    def _delete_vectors_from_chroma(
+        self, vector_db_path: str, file_id: int,
+        stored_file_path: str | None = None,
+    ) -> dict | None:
+        """Delete exactly one file's vectors and return a restorable snapshot."""
         try:
-            # 初始化嵌入模型（使用默认模型）
-            embeddings = OllamaEmbeddings(
-                model=settings.EMBEDDING_MODEL,
-                base_url=settings.OLLAMA_BASE_URL,
-            )
-            
-            # 加载向量数据库
-            vectorstore = Chroma(
-                persist_directory=vector_db_path,
-                embedding_function=embeddings
-            )
-            
-            # 获取所有文档的元数据
+            vectorstore = Chroma(persist_directory=vector_db_path)
             collection = vectorstore._collection
-            
-            # 获取所有文档
-            all_results = collection.get()
-            
-            if not all_results['ids']:
-                print(f"ChromaDB中没有找到任何文档")
-                return False
-            
-            # 查找包含该文件名的文档
-            matching_ids = []
-            for i, metadata in enumerate(all_results['metadatas']):
-                if metadata and 'source' in metadata:
-                    source_path = metadata['source']
-                    # 从source路径中提取文件名
-                    source_filename = os.path.basename(source_path)
-                    # 从原始文件名中提取文件名（去掉路径）
-                    original_filename = os.path.basename(filename)
-                    
-                    
-                    # 检查原始文件名是否包含在source文件名中（处理时间戳前缀）
-                    if original_filename in source_filename:
-                        matching_ids.append(all_results['ids'][i])
-            
-            if matching_ids:
-                # 删除匹配的向量数据
-                collection.delete(ids=matching_ids)
-                logger.info("从 ChromaDB 中删除了 %s 个向量", len(matching_ids))
-                return True
-            else:
-                logger.info("ChromaDB 中未找到待删除文件的向量数据")
-                return False
-                
-        except Exception as e:
-            logger.error("从 ChromaDB 删除向量数据失败")
-            return False
+            snapshot = collection.get(
+                where={"file_id": str(file_id)},
+                include=["documents", "metadatas", "embeddings"],
+            )
+            # Legacy chunks predate file_id metadata. Match their exact stored
+            # source filename (never a substring) so old indexes remain
+            # deletable without risking a.txt matching data.txt.
+            if not snapshot.get("ids") and stored_file_path:
+                all_items = collection.get(include=["documents", "metadatas", "embeddings"])
+                expected_name = Path(stored_file_path).name
+                indexes = [
+                    index for index, metadata in enumerate(all_items.get("metadatas") or [])
+                    if metadata and Path(str(metadata.get("source", ""))).name == expected_name
+                ]
+                snapshot = {
+                    key: [values[index] for index in indexes]
+                    for key, values in all_items.items()
+                    if isinstance(values, list)
+                }
+            if snapshot.get("ids"):
+                collection.delete(ids=snapshot["ids"])
+            return snapshot
+        except Exception:
+            logger.exception("从 ChromaDB 删除向量数据失败")
+            return None
+
+    @staticmethod
+    def _restore_vectors(vector_db_path: str, snapshot: dict | None) -> None:
+        if not snapshot or not snapshot.get("ids"):
+            return
+        collection = Chroma(persist_directory=vector_db_path)._collection
+        collection.add(
+            ids=snapshot["ids"], documents=snapshot.get("documents"),
+            metadatas=snapshot.get("metadatas"), embeddings=snapshot.get("embeddings"),
+        )
     
     def get_user_knowledge_bases(self, user_id: int, db: Session = None) -> List[Dict[str, Any]]:
         """获取用户的知识库列表"""
@@ -546,19 +667,42 @@ class KnowledgeBaseService:
                     "message": "知识库不存在或无权限访问"
                 }
             
-            # 删除向量数据库文件
-            if knowledge_base.vector_db_path and os.path.exists(knowledge_base.vector_db_path):
-                shutil.rmtree(knowledge_base.vector_db_path)
-            
-            # 删除上传的文件
-            kb_upload_dir = os.path.join(self.base_upload_dir, f"user_{user_id}", f"kb_{knowledge_base.name}")
-            if os.path.exists(kb_upload_dir):
-                shutil.rmtree(kb_upload_dir)
-            
-            # 删除数据库记录
-            success = DatabaseService.delete_knowledge_base(knowledge_base_id, user_id, db)
+            vector_dir = self._validated_stored_path(
+                self.base_vector_dir, knowledge_base.vector_db_path,
+            ) or self._vector_dir(user_id, knowledge_base_id)
+            upload_dirs = {self._upload_dir(user_id, knowledge_base_id)}
+            for knowledge_file in knowledge_base.files:
+                stored_file = self._validated_stored_path(
+                    self.base_upload_dir, knowledge_file.file_path,
+                )
+                if stored_file:
+                    upload_dirs.add(stored_file.parent)
+            vector_quarantine = self._quarantine(vector_dir)
+            upload_quarantines = [
+                (directory, self._quarantine(directory))
+                for directory in sorted(upload_dirs, key=lambda item: len(item.parts), reverse=True)
+                if directory.exists()
+            ]
+
+            knowledge_base.is_active = False
+            knowledge_base.updated_at = datetime.now()
+            try:
+                db.commit()
+                success = True
+            except Exception:
+                db.rollback()
+                self._restore_quarantine(vector_quarantine, vector_dir)
+                for original, quarantined in reversed(upload_quarantines):
+                    self._restore_quarantine(quarantined, original)
+                raise
             
             if success:
+                for quarantined in (vector_quarantine, *(item[1] for item in upload_quarantines)):
+                    if quarantined and quarantined.exists():
+                        try:
+                            shutil.rmtree(quarantined)
+                        except OSError:
+                            logger.exception("清理已删除知识库的隔离目录失败")
                 return {
                     "success": True,
                     "message": f"知识库 '{knowledge_base.name}' 删除成功"
@@ -569,7 +713,11 @@ class KnowledgeBaseService:
                     "message": "删除知识库失败"
                 }
                 
-        except Exception as e:
+        except ValueError:
+            logger.exception("拒绝删除越界的知识库存储路径")
+            return {"success": False, "message": "知识库存储路径不安全，已拒绝删除"}
+        except Exception:
+            logger.exception("删除知识库失败")
             return {
                 "success": False,
                 "message": "删除知识库失败"
@@ -594,30 +742,31 @@ class KnowledgeBaseService:
                     "message": "知识库不存在或无权限访问"
                 }
             
-            # 删除物理文件
-            if os.path.exists(knowledge_file.file_path):
-                os.remove(knowledge_file.file_path)
-            
-            # 从ChromaDB中删除向量数据
+            file_path = self._validated_stored_path(self.base_upload_dir, knowledge_file.file_path)
+            vector_path = self._validated_stored_path(self.base_vector_dir, knowledge_base.vector_db_path)
+            file_quarantine = self._quarantine(file_path) if file_path else None
+            vector_snapshot = self._delete_vectors_from_chroma(
+                str(vector_path), file_id, knowledge_file.file_path,
+            ) if vector_path and vector_path.exists() else {"ids": []}
+            if vector_snapshot is None:
+                self._restore_quarantine(file_quarantine, file_path)
+                return {"success": False, "message": "向量索引删除失败，未删除文件记录"}
+
+            db.delete(knowledge_file)
+            knowledge_base.file_count = max(0, knowledge_base.file_count - 1)
+            knowledge_base.document_count = max(0, knowledge_base.document_count - knowledge_file.document_count)
             try:
-                if knowledge_base.vector_db_path and os.path.exists(knowledge_base.vector_db_path):
-                    # 使用文件名作为过滤条件删除向量数据
-                    success = self._delete_vectors_from_chroma(knowledge_base.vector_db_path, knowledge_file.original_filename)
-                    if not success:
-                        logger.warning("从 ChromaDB 删除文件向量数据失败")
-                else:
-                    logger.warning("向量数据库路径不存在")
+                db.commit()
+                success = True
             except Exception:
-                logger.error("从 ChromaDB 删除向量数据时出错")
-                # 即使向量删除失败，也继续删除其他数据
-            
-            # 删除数据库记录
-            success = DatabaseService.delete_knowledge_file(file_id, knowledge_base_id, user_id, db)
+                db.rollback()
+                self._restore_vectors(str(vector_path), vector_snapshot)
+                self._restore_quarantine(file_quarantine, file_path)
+                raise
             
             if success:
-                # 更新知识库统计信息
-                DatabaseService.update_knowledge_base_stats(knowledge_base_id, db)
-                
+                if file_quarantine and file_quarantine.exists():
+                    file_quarantine.unlink()
                 return {
                     "success": True,
                     "message": f"文件 '{knowledge_file.original_filename}' 删除成功"
@@ -628,7 +777,11 @@ class KnowledgeBaseService:
                     "message": "删除文件失败"
                 }
                 
-        except Exception as e:
+        except ValueError:
+            logger.exception("拒绝删除越界的知识库文件路径")
+            return {"success": False, "message": "文件存储路径不安全，已拒绝删除"}
+        except Exception:
+            logger.exception("删除知识库文件失败")
             return {
                 "success": False,
                 "message": "删除文件失败"

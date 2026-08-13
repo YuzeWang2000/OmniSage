@@ -339,3 +339,7 @@ README 启动命令、限制和安全提醒较详细，OpenAPI 28 paths 与当�
 ---
 
 结论：先完成阶段 0/1，不宜立即扩展多模态或在线嵌入。当前 Provider 重构是可保留的良好基础；后续工程价值最高的方向是修复路径与聊天语义、把知识库处理改造成可恢复状态机，并建立真实集成测试、迁移和可观测性闭环。
+
+## 修复进展（2026-08-13）
+
+用户已授权修复五项 P1。当前实现已完成：SEC-001 使用知识库 ID 目录及 root containment guard；BUG-001 由服务端装配可信历史并处理 regenerate；DATA-001 为上传/删除增加 SQL rollback、file quarantine、file_id chunk 标识和 Chroma snapshot compensation；PERF-001 为 RAG/Wiki 引入受限 worker、独立 Session 和统一 HTTP timeout；DEPLOY-001 移除 `.npmrc` 阻断、提交 `uv.lock` 并补 Compose 示例变量。详细验证结果以本轮最终回复和 `TASK_PROGRESS.md` 最新条目为准；Docker 因环境无 CLI 仍待外部 smoke test。

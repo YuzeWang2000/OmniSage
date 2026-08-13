@@ -68,6 +68,10 @@ class WikiService:
         self.session.headers.update({
             'User-Agent': 'OmniSage/1.0 (https://github.com/your-repo)'
         })
+        self.request_timeout = (
+            settings.WIKI_CONNECT_TIMEOUT_SECONDS,
+            settings.WIKI_READ_TIMEOUT_SECONDS,
+        )
         
         # 嵌入模型
         self.embedding_model = "nomic-embed-text"
@@ -88,7 +92,7 @@ class WikiService:
         """自动模式：优先使用在线模式，失败时切换到离线模式"""
         try:
             # 测试在线模式是否可用
-            test_response = self.session.get(f"{self.wikipedia_api_url}/page/summary/测试", timeout=5)
+            test_response = self.session.get(f"{self.wikipedia_api_url}/page/summary/测试", timeout=self.request_timeout)
             if test_response.status_code == 200:
                 self.mode = "online"
                 logger.info("在线维基百科服务可用，使用在线模式")
@@ -142,7 +146,7 @@ class WikiService:
         if new_mode == "online":
             try:
                 # 测试在线模式是否可用
-                test_response = self.session.get(f"{self.wikipedia_api_url}/page/summary/测试", timeout=5)
+                test_response = self.session.get(f"{self.wikipedia_api_url}/page/summary/测试", timeout=self.request_timeout)
                 if test_response.status_code == 200:
                     self.mode = "online"
                     logger.info("切换到在线维基百科服务")
@@ -429,7 +433,7 @@ class WikiService:
                 'srprop': 'snippet|title|timestamp'
             }
             
-            response = self.session.get(self.search_api_url, params=params)
+            response = self.session.get(self.search_api_url, params=params, timeout=self.request_timeout)
             response.raise_for_status()
             
             data = response.json()
@@ -456,13 +460,13 @@ class WikiService:
         try:
             # 获取页面摘要
             summary_url = f"{self.wikipedia_api_url}/page/summary/{quote(title)}"
-            summary_response = self.session.get(summary_url)
+            summary_response = self.session.get(summary_url, timeout=self.request_timeout)
             summary_response.raise_for_status()
             summary_data = summary_response.json()
             
             # 获取完整内容
             content_url = f"{self.wikipedia_api_url}/page/html/{quote(title)}"
-            content_response = self.session.get(content_url)
+            content_response = self.session.get(content_url, timeout=self.request_timeout)
             content_response.raise_for_status()
             
             # 获取分类信息
@@ -494,7 +498,7 @@ class WikiService:
                 'cllimit': 20
             }
             
-            response = self.session.get(self.search_api_url, params=params)
+            response = self.session.get(self.search_api_url, params=params, timeout=self.request_timeout)
             response.raise_for_status()
             
             data = response.json()

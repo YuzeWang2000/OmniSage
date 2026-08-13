@@ -41,6 +41,19 @@ export function deleteKnowledgeBase(knowledgeBaseId: number, signal?: AbortSigna
   });
 }
 
+export function updateKnowledgeBase(
+  knowledgeBaseId: number,
+  payload: Pick<ApiSchemas["KnowledgeBaseUpdate"], "name" | "description">,
+  signal?: AbortSignal,
+) {
+  return apiRequest<KnowledgeBase, typeof payload>({
+    method: "PATCH",
+    url: `/rag/knowledge-bases/${knowledgeBaseId}`,
+    data: payload,
+    signal,
+  });
+}
+
 export function getKnowledgeFiles(knowledgeBaseId: number, signal?: AbortSignal) {
   return apiRequest<ApiSchemas["KnowledgeFileListResponse"]>({
     method: "GET",

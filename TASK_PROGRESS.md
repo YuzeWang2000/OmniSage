@@ -211,3 +211,22 @@
 - 根因：删除当前会话后，内部导航先更新活动 ID 和 URL；读取旧 `conversation` 查询参数的 effect 在下一次渲染中又将已删除 ID 写回，与列表兜底选择形成竞态并触发全局错误边界。
 - 已修复：内部会话导航记录待同步 URL 目标，URL effect 识别并忽略过渡态；删除成功从 QueryClient 最新缓存计算剩余列表，清理消息缓存后原子切换到下一会话或 `/chat` 空状态。
 - 验收：前端 `28 passed`、typecheck、lint、build 通过；Playwright `6 passed`，新增“删除最后一个会话后 URL 为 `/chat`、显示空状态且无错误边界”真实交互回归。
+
+## P1 审查项修复（2026-08-13）
+
+- SEC-001：知识库目录改用不可变 ID，所有存储路径执行根目录 containment 校验；越界旧路径拒绝删除。
+- BUG-001：服务端从已授权会话装配最近历史，客户端只提交当前轮；重新生成移除旧回答与重复问题。
+- DATA-001：上传使用 pending SQL row + file_id chunk 元数据；失败回滚 SQL/文件/向量。删除使用隔离文件、向量快照和 SQL 失败恢复。
+- PERF-001：RAG/Wiki 阻塞任务使用独立受限 worker；请求使用独立 Session；Wiki HTTP 设置 connect/read timeout。
+- DEPLOY-001：移除不存在 `.npmrc` 的 COPY、对齐 pnpm 版本、纳入 `backend/uv.lock`、补全 Compose MySQL 示例变量。
+- 专项验证：新增多轮/路径/补偿/超时/部署输入测试，9 passed。
+- 完整验收：后端 `46 passed`，`compileall` 通过，`uv lock --check` 通过；前端 `28 passed`，typecheck、lint、生产构建通过；Playwright `6 passed`；运行时 OpenAPI 与 `openapi.json` 一致（28 条路径）。
+- 验证限制：当前环境没有 Docker CLI，未执行 `docker compose config/build/up`；未调用真实 Provider、付费 API 或生产数据。
+
+## 回归修复：登录提示、知识库索引与重命名（2026-08-13）
+
+- 登录：`/auth/login` 的安全 401 详情不再被全局“会话失效”文案覆盖；其他受保护接口的 401 仍会清理失效登录态。
+- 索引：Chroma 写入前清理复杂/空元数据，并按 `VECTOR_WRITE_BATCH_SIZE`（默认 32）分批嵌入；底层异常写入 traceback，客户端收到 Ollama 连接、模型缺失或通用诊断提示。
+- 重命名：新增用户隔离的 `PATCH /rag/knowledge-bases/{id}`，支持修改名称和描述、检测同名冲突；ID 型文件与向量目录不移动。
+- 本机诊断：Ollama 可访问，`nomic-embed-text:latest` 已安装，`/api/embed` 返回 768 维向量。未用用户原文件重新上传，避免擅自写入知识库。
+- 验收：后端 `49 passed`；前端 `30 passed`，typecheck、lint、生产构建通过；OpenAPI 与运行时一致。

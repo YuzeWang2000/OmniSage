@@ -63,6 +63,10 @@ class Settings:
     SEARCH_CANDIDATE_MULTIPLIER: int = int(
         os.getenv("SEARCH_CANDIDATE_MULTIPLIER", "3")
     )
+    WIKI_CONNECT_TIMEOUT_SECONDS: float = float(os.getenv("WIKI_CONNECT_TIMEOUT_SECONDS", "3"))
+    WIKI_READ_TIMEOUT_SECONDS: float = float(os.getenv("WIKI_READ_TIMEOUT_SECONDS", "10"))
+    RAG_WORKER_LIMIT: int = max(1, int(os.getenv("RAG_WORKER_LIMIT", "4")))
+    VECTOR_WRITE_BATCH_SIZE: int = max(1, int(os.getenv("VECTOR_WRITE_BATCH_SIZE", "32")))
 
     CORS_ALLOWED_ORIGINS: list[str] = [
         origin.strip()

@@ -5,6 +5,7 @@ from .. import schemas
 from ..database import SessionLocal
 from ..services.knowledgebase_service import knowledge_base_service
 from ..services.database_service import DatabaseService
+from ..services.blocking_work import run_rag_work
 from ..config import settings
 from ..security import (
     AuthenticatedUser,
@@ -130,10 +131,9 @@ def get_user_knowledge_bases(
         )
 
 @router.delete("/knowledge-bases/{knowledge_base_id}")
-def delete_knowledge_base(
+async def delete_knowledge_base(
     knowledge_base_id: int,
     user_id: int | None = Query(None, description="兼容字段：用户ID"),
-    db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
@@ -141,9 +141,12 @@ def delete_knowledge_base(
     """
     try:
         ensure_legacy_user_matches(user_id, current_user)
-        result = knowledge_base_service.delete_knowledge_base(
-            knowledge_base_id, current_user.id, db
-        )
+        def delete():
+            with SessionLocal() as work_db:
+                return knowledge_base_service.delete_knowledge_base(
+                    knowledge_base_id, current_user.id, work_db,
+                )
+        result = await run_rag_work(delete)
         if result["success"]:
             return {"message": result["message"]}
         else:
@@ -160,13 +163,30 @@ def delete_knowledge_base(
             detail="删除知识库失败"
         )
 
+@router.patch("/knowledge-bases/{knowledge_base_id}", response_model=schemas.KnowledgeBaseResponse)
+def update_knowledge_base(
+    knowledge_base_id: int,
+    update: schemas.KnowledgeBaseUpdate,
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    result = knowledge_base_service.update_knowledge_base(
+        knowledge_base_id=knowledge_base_id,
+        user_id=current_user.id,
+        name=update.name,
+        description=update.description,
+        db=db,
+    )
+    if not result["success"]:
+        raise HTTPException(status_code=result["status"], detail=result["message"])
+    return result["knowledge_base"]
+
 # 文件管理接口
 @router.post("/knowledge-bases/{knowledge_base_id}/files", response_model=schemas.FileUploadResponse)
-def upload_file_to_knowledge_base(
+async def upload_file_to_knowledge_base(
     knowledge_base_id: int,
     file: UploadFile = File(...),
     user_id: int | None = Query(None, description="兼容字段：用户ID"),
-    db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
@@ -174,9 +194,12 @@ def upload_file_to_knowledge_base(
     """
     try:
         ensure_legacy_user_matches(user_id, current_user)
-        result = knowledge_base_service.upload_file_to_knowledge_base(
-            knowledge_base_id, current_user.id, file, db
-        )
+        def upload():
+            with SessionLocal() as work_db:
+                return knowledge_base_service.upload_file_to_knowledge_base(
+                    knowledge_base_id, current_user.id, file, work_db,
+                )
+        result = await run_rag_work(upload)
         if result["success"]:
             return schemas.FileUploadResponse(
                 message=result["message"],
@@ -250,62 +273,59 @@ def get_knowledge_base_files(
     "/knowledge-bases/{knowledge_base_id}/search",
     response_model=schemas.KnowledgeBaseSearchResponse,
 )
-def search_knowledge_base(
+async def search_knowledge_base(
     knowledge_base_id: int,
     user_id: int | None = Query(None, description="兼容字段：用户ID"),
     query: str = Query(..., min_length=1, description="查询内容"),
     top_k: int = Query(5, ge=1, le=20, description="返回结果数量"),
     min_score: float | None = Query(None, ge=0, le=1, description="最低相关度"),
-    db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """使用已有向量检索能力搜索用户指定的知识库。"""
     ensure_legacy_user_matches(user_id, current_user)
-    knowledge_base = DatabaseService.get_knowledge_base_by_id(
-        knowledge_base_id, current_user.id, db
-    )
-    if not knowledge_base:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="知识库不存在或无权访问",
-        )
-    if not knowledge_base.vector_db_path or not os.path.exists(knowledge_base.vector_db_path):
+    def search():
+        with SessionLocal() as work_db:
+            knowledge_base = DatabaseService.get_knowledge_base_by_id(
+                knowledge_base_id, current_user.id, work_db,
+            )
+            if not knowledge_base:
+                return None
+            if not knowledge_base.vector_db_path or not os.path.exists(knowledge_base.vector_db_path):
+                return knowledge_base.name, {"threshold": None, "results": []}
+            response = knowledge_base_service.search_knowledge_base(
+                query, knowledge_base.vector_db_path, knowledge_base.embedding_model,
+                top_k, min_score,
+            )
+            return knowledge_base.name, response
+    try:
+        result = await run_rag_work(search)
+    except RuntimeError:
+        logger.warning("知识库检索暂时失败")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="知识库检索暂时失败")
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识库不存在或无权访问")
+    knowledge_base_name, search_response = result
+    if not search_response["results"]:
         return {
             "query": query,
             "knowledge_base_id": knowledge_base_id,
-            "knowledge_base_name": knowledge_base.name,
-            "threshold": None,
+            "knowledge_base_name": knowledge_base_name,
+            "threshold": search_response["threshold"],
             "results": [],
         }
-
-    try:
-        search_response = knowledge_base_service.search_knowledge_base(
-            query,
-            knowledge_base.vector_db_path,
-            knowledge_base.embedding_model,
-            top_k,
-            min_score,
-        )
-    except RuntimeError:
-        logger.warning("知识库检索暂时失败")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="知识库检索暂时失败",
-        )
     return {
         "query": query,
         "knowledge_base_id": knowledge_base_id,
-        "knowledge_base_name": knowledge_base.name,
+        "knowledge_base_name": knowledge_base_name,
         "threshold": search_response["threshold"],
         "results": search_response["results"],
     }
 
 @router.delete("/knowledge-bases/{knowledge_base_id}/files/{file_id}")
-def delete_file_from_knowledge_base(
+async def delete_file_from_knowledge_base(
     knowledge_base_id: int,
     file_id: int,
     user_id: int | None = Query(None, description="兼容字段：用户ID"),
-    db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
@@ -313,9 +333,12 @@ def delete_file_from_knowledge_base(
     """
     try:
         ensure_legacy_user_matches(user_id, current_user)
-        result = knowledge_base_service.delete_file_from_knowledge_base(
-            file_id, knowledge_base_id, current_user.id, db
-        )
+        def delete():
+            with SessionLocal() as work_db:
+                return knowledge_base_service.delete_file_from_knowledge_base(
+                    file_id, knowledge_base_id, current_user.id, work_db,
+                )
+        result = await run_rag_work(delete)
         if result["success"]:
             return {"message": result["message"]}
         else:
@@ -371,24 +394,23 @@ def get_user_knowledge_base_stats(
 # Wiki知识搜索接口
 
 @router.get("/enhance-context-with-wiki")
-def enhance_context_with_wiki(
+async def enhance_context_with_wiki(
     query: str = Query(..., description="查询内容"),
     existing_context: str = Query("", description="现有上下文"),
-    db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     使用Wiki知识增强上下文
     """
     try:
-        current_wiki_kb = get_wiki_knowledge_base()
+        current_wiki_kb = await run_rag_work(get_wiki_knowledge_base)
         if current_wiki_kb is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Wiki 服务暂不可用",
             )
-        enhanced_context = current_wiki_kb.get_enhanced_context(
-            query, existing_context
+        enhanced_context = await run_rag_work(
+            current_wiki_kb.get_enhanced_context, query, existing_context,
         )
         return {
             "success": True,
@@ -407,21 +429,20 @@ def enhance_context_with_wiki(
 
 
 @router.get("/wiki/search", response_model=schemas.WikiSearchResponse)
-def search_wiki(
+async def search_wiki(
     query: str = Query(..., min_length=1, description="查询内容"),
     limit: int = Query(5, ge=1, le=10, description="返回结果数量"),
-    db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """使用当前 Wiki 模式返回可用于引用展示的结构化结果。"""
-    current_wiki_kb = get_wiki_knowledge_base()
+    current_wiki_kb = await run_rag_work(get_wiki_knowledge_base)
     if current_wiki_kb is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Wiki 服务暂不可用",
         )
     try:
-        results = current_wiki_kb.search_knowledge(query, limit=limit)
+        results = await run_rag_work(current_wiki_kb.search_knowledge, query, limit)
         return {
             "query": query,
             "mode": current_wiki_kb.wiki_service.mode,
@@ -436,17 +457,16 @@ def search_wiki(
 
 # Wiki数据管理接口
 @router.get("/wiki/status")
-def get_wiki_status(
-    db: Session = Depends(get_db),
+async def get_wiki_status(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     获取Wiki数据状态
     """
     try:
-        current_wiki_kb = get_wiki_knowledge_base()
+        current_wiki_kb = await run_rag_work(get_wiki_knowledge_base)
         if current_wiki_kb and hasattr(current_wiki_kb, 'wiki_service'):
-            stats = current_wiki_kb.wiki_service.get_database_stats()
+            stats = await run_rag_work(current_wiki_kb.wiki_service.get_database_stats)
             return {
                 "success": True,
                 "mode": current_wiki_kb.wiki_service.mode,
@@ -466,25 +486,24 @@ def get_wiki_status(
         )
 
 @router.post("/wiki/switch-mode")
-def switch_wiki_mode(
+async def switch_wiki_mode(
     mode: str = Query(..., description="目标模式: online 或 offline"),
-    db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     切换Wiki服务模式
     """
     try:
-        current_wiki_kb = get_wiki_knowledge_base()
+        current_wiki_kb = await run_rag_work(get_wiki_knowledge_base)
         if not current_wiki_kb or not hasattr(current_wiki_kb, 'wiki_service'):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Wiki服务不可用"
             )
         
-        success = current_wiki_kb.wiki_service.switch_mode(mode)
+        success = await run_rag_work(current_wiki_kb.wiki_service.switch_mode, mode)
         if success:
-            stats = current_wiki_kb.wiki_service.get_database_stats()
+            stats = await run_rag_work(current_wiki_kb.wiki_service.get_database_stats)
             return {
                 "success": True,
                 "message": f"成功切换到{mode}模式",
